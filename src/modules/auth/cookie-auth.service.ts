@@ -2,18 +2,20 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { CookieOptions, Response } from 'express';
 import { randomBytes } from 'crypto';
-import {
-  COOKIE_ACCESS,
-  COOKIE_CSRF,
-  COOKIE_REFRESH,
-} from './cookie.constants';
+import { COOKIE_ACCESS, COOKIE_CSRF, COOKIE_REFRESH } from './cookie.constants';
 
 @Injectable()
 export class CookieAuthService {
   constructor(private readonly config: ConfigService) {}
 
+  private isSecure(): boolean {
+    const configured = this.config.get<string>('COOKIE_SECURE');
+    if (configured !== undefined) return configured === 'true';
+    return this.config.get<string>('NODE_ENV') === 'production';
+  }
+
   private baseOptions(): CookieOptions {
-    const secure = this.config.get<string>('COOKIE_SECURE', 'false') === 'true';
+    const secure = this.isSecure();
     return {
       httpOnly: true,
       secure,
@@ -47,7 +49,7 @@ export class CookieAuthService {
 
     res.cookie(COOKIE_CSRF, csrf, {
       httpOnly: false,
-      secure: this.config.get<string>('COOKIE_SECURE', 'false') === 'true',
+      secure: this.isSecure(),
       sameSite: 'lax',
       path: '/',
       maxAge: refreshMaxAge,
@@ -55,7 +57,7 @@ export class CookieAuthService {
   }
 
   clearAuthCookies(res: Response) {
-    const secure = this.config.get<string>('COOKIE_SECURE', 'false') === 'true';
+    const secure = this.isSecure();
     res.clearCookie(COOKIE_ACCESS, { path: '/', sameSite: 'lax', secure });
     res.clearCookie(COOKIE_REFRESH, {
       path: '/api/auth',
