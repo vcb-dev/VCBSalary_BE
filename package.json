@@ -18,13 +18,14 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev",
-    "prisma:seed": "prisma db seed",
-    "db:setup": "prisma db push && prisma db seed"
-  },
-  "prisma": {
-    "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
+    "prisma:generate": "prisma generate --config prisma.config.ts",
+    "prisma:migrate": "prisma migrate dev --config prisma.config.ts",
+    "prisma:seed": "prisma db seed --config prisma.config.ts",
+    "seed:permissions": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/seed.ts permissions",
+    "seed:base": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/seed.ts base",
+    "seed:dev": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/seed.ts dev",
+    "db:bootstrap": "bash scripts/bootstrap-database.sh",
+    "db:setup": "npm run db:bootstrap && npm run prisma:seed"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
@@ -34,7 +35,9 @@
     "@nestjs/mapped-types": "^2.1.1",
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.0.1",
+    "@nestjs/swagger": "^11.4.7",
     "@prisma/client": "^6.19.3",
+    "@supabase/supabase-js": "^2.115.0",
     "bcryptjs": "^3.0.3",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
@@ -54,6 +57,7 @@
     "@types/cookie-parser": "^1.4.9",
     "@types/express": "^5.0.0",
     "@types/jest": "^30.0.0",
+    "@types/multer": "^2.2.0",
     "@types/node": "^24.0.0",
     "@types/passport-jwt": "^4.0.1",
     "@types/supertest": "^7.0.0",
@@ -80,6 +84,9 @@
       "ts"
     ],
     "rootDir": "src",
+    "setupFiles": [
+      "<rootDir>/../test/jest.setup.ts"
+    ],
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"

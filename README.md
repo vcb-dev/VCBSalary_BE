@@ -1,39 +1,84 @@
-# VCBSalary_BE
+# VCB Salary API
 
-NestJS API cho VCB Salary. Hiện tại chỉ có module **auth** (cookie HttpOnly, SameSite=Lax).
+NestJS + Prisma/PostgreSQL API cho hệ thống quản lý nhân sự, kỳ lương, KPI/OKR, traffic, doanh thu, cấu hình thưởng, tính/duyệt lương, phân quyền, thông báo và audit log.
 
 ## Chạy local
+
+Yêu cầu Node.js, npm và một PostgreSQL database. Cấu hình tối thiểu trong `.env`:
+
+```dotenv
+DATABASE_URL=postgresql://user:password@localhost:5432/vcb_salary
+DIRECT_URL=postgresql://user:password@localhost:5432/vcb_salary
+JWT_SECRET=replace-with-a-long-random-secret
+FE_ORIGIN=http://localhost:5173
+```
+
+Nếu không khai báo `DIRECT_URL`, Prisma sẽ dùng `DATABASE_URL` cho migration.
+Biến môi trường truyền trực tiếp từ CI/shell luôn được ưu tiên hơn file `.env` cục bộ.
+
+Với database hoàn toàn mới:
+
+```bash
+npm install
+npm run db:setup
+npm run start:dev
+```
+
+`db:setup` dựng schema hiện tại, ghi nhận lịch sử migration tăng dần sẵn có, rồi chạy seed. Repository này được chuyển từ một baseline có trước migration đầu tiên nên không chạy trực tiếp `prisma migrate deploy` trên database rỗng.
+
+Với database đã tồn tại và đã có bảng `_prisma_migrations`:
 
 ```bash
 npm install
 npx prisma generate
-python3 -c "import sqlite3, pathlib; p=pathlib.Path('prisma/dev.db');
-p.unlink(missing_ok=True); con=sqlite3.connect(p);
-con.executescript(pathlib.Path('prisma/init.sql').read_text()); con.close()"
+npx prisma migrate deploy
 npm run start:dev
 ```
 
-API: `http://localhost:3000/api`
+Không chạy `db:bootstrap` trên database đang vận hành. Lệnh đó chỉ dành cho database rỗng; các môi trường hiện hữu dùng `prisma migrate deploy`.
 
-## Tài khoản demo
+API mặc định: `http://localhost:3000/api`.
 
-| Vai trò | Email | Mật khẩu |
-| --- | --- | --- |
-| Admin | admin@vcbsalary.vn | Admin@123 |
-| HR | hr@vcbsalary.vn | Admin@123 |
+## Kiểm tra chất lượng
+
+```bash
+npm run build
+npm test -- --runInBand
+npx prisma validate
+```
+
+E2E cần kết nối được database test riêng:
+
+```bash
+npm run test:e2e
+```
+
+## Bảo mật và biến môi trường
+
+- `COOKIE_SECURE`: nếu không khai báo, tự bật khi `NODE_ENV=production`.
+- `SWAGGER_ENABLED`: mặc định bật ngoài production và tắt trong production.
+- `LOGIN_MAX_ATTEMPTS`: số lần đăng nhập sai trước khi tạm khóa, mặc định `5`.
+- `LOGIN_WINDOW_SECONDS`: cửa sổ giới hạn đăng nhập, mặc định `900` giây.
+- `TRUST_PROXY=true`: bật khi ứng dụng chạy sau đúng một reverse proxy tin cậy để lấy IP thật.
+- `FE_ORIGIN`: danh sách origin được phép, phân tách bằng dấu phẩy.
+- `PAYROLL_AUTO_OPEN_ENABLED`: bật/tắt cơ chế tự tạo và mở kỳ lương tháng hiện tại; mặc định bật
+  ngoài môi trường test.
+- `PAYROLL_PERIOD_CHECK_INTERVAL_MS`: chu kỳ kiểm tra kỳ tháng hiện tại, mặc định `900000`
+  (15 phút), tối thiểu 60 giây.
+
+Khi tự mở kỳ, hệ thống dùng tài khoản `ACTIVE` lâu đời nhất có quyền
+`payroll_period.manage` ở phạm vi `ALL` làm actor audit. Nếu chưa có Reward Rule Set đang active
+hoặc dữ liệu team/tỷ trọng KPI của nhân sự chưa hợp lệ, kỳ tháng vẫn được tạo ở trạng thái Nháp
+và sẽ được thử mở lại ở chu kỳ sau.
+
+Rate limit đăng nhập hiện lưu trong bộ nhớ tiến trình. Khi chạy nhiều instance, đặt rate limit dùng chung ở API gateway/Redis để giới hạn có hiệu lực toàn cụm.
+
+Swagger chỉ có tại `/api/docs` khi `SWAGGER_ENABLED=true` (hoặc ở môi trường không phải production nếu biến này chưa được đặt).
 
 ## Auth
 
-Login không trả JWT trong JSON. Backend set cookie:
+Login không trả JWT trong JSON. Backend dùng cookie:
 
-- `vcbsalary_at` — access token, HttpOnly, SameSite=Lax
-- `vcbsalary_rt` — refresh token, HttpOnly, SameSite=Lax, path `/api/auth`
-- `vcbsalary_csrf` — CSRF double-submit, không HttpOnly, SameSite=Lax
-
-## API
-
-- `POST /api/auth/login`
-- `POST /api/auth/refresh`
-- `POST /api/auth/logout`
-- `GET /api/auth/me`
-- `GET /api/health`
+- `vcbsalary_at`: access token, HttpOnly, SameSite=Lax.
+- `vcbsalary_rt`: refresh token xoay vòng, HttpOnly, SameSite=Lax, giới hạn path `/api/auth`.
+- `vcbsalary_csrf`: token double-submit CSRF để frontend gửi qua `X-CSRF-Token`.

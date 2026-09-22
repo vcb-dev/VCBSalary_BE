@@ -2,6 +2,7 @@
 /dist
 /node_modules
 /build
+*.tsbuildinfo
 
 # env
 .env
@@ -22,3 +23,19 @@ npm-debug.log*
 
 # OS
 .DS_Store
+
+# TypeScript artifacts sinh ra cạnh file nguồn
+# (xảy ra khi chạy `tsc` trực tiếp lên 1 file, bỏ qua outDir: ./dist)
+/prisma/**/*.js
+/prisma/**/*.js.map
+/prisma/**/*.d.ts
+/prisma/**/*.d.ts.map
+/prisma.config.js
+/prisma.config.js.map
+/prisma.config.d.ts
+/src/**/*.js
+/src/**/*.js.map
+/src/**/*.d.ts
+/test/**/*.js
+/test/**/*.js.map
+/test/**/*.d.ts
