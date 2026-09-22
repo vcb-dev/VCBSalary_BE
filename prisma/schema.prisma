@@ -79,6 +79,28 @@ enum KpiValueDataSource {
   AUTOMATION_GEN_VIDEO
 }
 
+enum KpiDataSource {
+  INTERNAL
+  AUTOMATION_GEN_VIDEO
+}
+
+// CANCELLED là hủy mềm để giữ lịch sử — dữ liệu nghiệp vụ không bao giờ xóa cứng.
+enum KpiAssignmentStatus {
+  ASSIGNED
+  CANCELLED
+}
+
+enum SelfConfirmationStatus {
+  DRAFT
+  CONFIRMED
+}
+
+enum LeaderReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 enum PayrollPeriodStatus {
   DRAFT
   OPEN
@@ -90,37 +112,6 @@ enum RewardRuleSetStatus {
   DRAFT
   ACTIVE
   ARCHIVED
-}
-
-/// Nguồn cấu hình của nhóm KPI — dùng nội bộ để phân biệt nhóm nhập tay với nhóm được đồng bộ
-/// từ AutomationGenVideo, KHÔNG hiển thị label kỹ thuật này cho employee.
-enum KpiDataSource {
-  INTERNAL
-  AUTOMATION_GEN_VIDEO
-}
-
-/// Trạng thái gán KPI group cho nhân sự trong 1 kỳ (M07) — DELETE endpoint chuyển sang CANCELLED
-/// (soft, giữ lịch sử) chứ không xóa cứng, đúng nguyên tắc chung không hard-delete dữ liệu nghiệp vụ.
-enum KpiAssignmentStatus {
-  ASSIGNED
-  CANCELLED
-}
-
-/// Trạng thái tự xác nhận của employee — chỉ 2 giá trị theo ERD. Khi Leader reject, giá trị này bị
-/// reset về DRAFT để nhân sự sửa lại rồi resubmit (đúng workflow "Rejected => editable => resubmit").
-/// Dùng chung cho employee_kpi_actuals (M07) và employee_okrs (M08) — cùng 1 workflow, cùng field.
-enum SelfConfirmationStatus {
-  DRAFT
-  CONFIRMED
-}
-
-/// Trạng thái duyệt cấp Leader — PENDING là giá trị mặc định (kể cả khi chưa CONFIRMED, chưa có gì
-/// để duyệt); chỉ đổi khi Leader approve/reject một actual đã CONFIRMED. Dùng chung cho
-/// employee_kpi_actuals (M07) và employee_okrs (M08).
-enum LeaderReviewStatus {
-  PENDING
-  APPROVED
-  REJECTED
 }
 
 enum SalaryRecordStatus {
@@ -142,8 +133,6 @@ enum TrafficPlatform {
   INSTAGRAM
 }
 
-/// Loại đề xuất trong kpi_okr_proposals (M08) — quyết định proposed_kpi_group_id bắt buộc hay
-/// không (KPI_ITEM: bắt buộc, cần biết thêm vào group nào; OKR: không dùng group).
 enum ProposalType {
   KPI_ITEM
   OKR
@@ -155,9 +144,6 @@ enum ProposalStatus {
   REJECTED
 }
 
-/// fullName vẫn giữ trên users (không có trong ERD) vì không phải user nào
-/// cũng gắn với employee (vd. tài khoản Admin/HR thuần hệ thống) — dùng làm
-/// display name mặc định khi user chưa liên kết employee.
 model User {
   id                    String     @id @default(uuid()) @db.Uuid
   employeeId            Int?       @unique @map("employee_id")
@@ -219,26 +205,22 @@ model Department {
   @@map("departments")
 }
 
-/// Danh mục nhóm nghiệp vụ dùng để tự động gán KPI khi mở kỳ (vd. Editor, Content Creator của
-/// Marketing). Một nhân sự có thể thuộc nhiều nhóm — các nhóm bổ sung cho nhau, không loại trừ.
-/// `departmentId` NULL = nhóm dùng chung mọi phòng ban; có giá trị = chỉ chọn được ở phòng ban đó.
-/// `isActive=false` (status) là soft-disable: nhóm cũ vẫn giữ nguyên dữ liệu đã gán, chỉ không
-/// còn xuất hiện khi gán mới.
 model EmployeeGroup {
-  id               Int                 @id @default(autoincrement())
-  code             String              @unique @db.VarChar(50)
-  name             String              @db.VarChar(150)
+  id   Int    @id @default(autoincrement())
+  code String @unique @db.VarChar(50)
+  name String @db.VarChar(150)
+
   description      String?
-  departmentId     Int?                @map("department_id")
-  /// Vai trò mặc định (scope SELF) gán cho tài khoản của nhân sự thuộc nhóm này. NULL = không suy
-  /// vai trò nào. Thay cho quy ước ngầm cũ "role.code phải trùng mã nhóm nghiệp vụ".
-  defaultRoleId    Int?                @map("default_role_id")
-  /// Từ khóa (đã bỏ dấu, viết hoa) để đoán nhóm từ chức danh khi tạo nhân sự mà không chọn nhóm
-  /// thủ công. Rỗng = không bao giờ tự đoán. Thay cho bảng regex cứng trong employees.service.
-  jobTitleKeywords String[]            @default([]) @map("job_title_keywords")
-  status           EmployeeGroupStatus @default(ACTIVE)
-  createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz()
-  updatedAt        DateTime            @updatedAt @map("updated_at") @db.Timestamptz()
+  // NULL = nhóm dùng chung mọi phòng ban; có giá trị = chỉ chọn được trong phòng ban đó.
+  departmentId     Int?     @map("department_id")
+  // Vai trò (scope SELF) tự gán cho tài khoản của nhân sự thuộc nhóm. NULL = không suy vai trò nào.
+  defaultRoleId    Int?     @map("default_role_id")
+  // Từ khóa ĐÃ BỎ DẤU và VIẾT HOA, dùng để đoán nhóm từ chức danh. Rỗng = không bao giờ tự đoán.
+  jobTitleKeywords String[] @default([]) @map("job_title_keywords")
+
+  status    EmployeeGroupStatus @default(ACTIVE)
+  createdAt DateTime            @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt DateTime            @updatedAt @map("updated_at") @db.Timestamptz()
 
   department  Department? @relation(fields: [departmentId], references: [id], onDelete: Restrict)
   defaultRole Role?       @relation(fields: [defaultRoleId], references: [id], onDelete: SetNull)
@@ -255,12 +237,7 @@ model Team {
   name         String     @db.VarChar(150)
   status       TeamStatus @default(ACTIVE)
   departmentId Int        @map("department_id")
-  /// Nguồn dữ liệu — NULL cho team nhập tay (vd. team kinh doanh); "AUTOMATION_GEN_VIDEO"
-  /// cho team editor/content được sinh từ dự án AutomationGenVideo. Chỉ dùng nội bộ để biết
-  /// trường nào do sync ghi đè, không hiển thị lên UI.
   sourceSystem String?    @map("source_system") @db.VarChar(30)
-  /// id của Team tương ứng bên hệ thống nguồn — dùng để nhận diện idempotent khi sync chạy lại.
-  /// `code` chỉ là mã hiển thị do hệ thống tự sinh, người dùng không phải nhập hoặc quản lý.
   externalId   String?    @unique @map("external_id") @db.Uuid
   lastSyncedAt DateTime?  @map("last_synced_at") @db.Timestamptz()
   createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz()
@@ -293,11 +270,7 @@ model Employee {
   employmentStatus  EmploymentStatus @default(ACTIVE) @map("employment_status")
   joinedAt          DateTime?        @map("joined_at") @db.Date
   leftAt            DateTime?        @map("left_at") @db.Date
-  /// Nguồn dữ liệu — NULL cho nhân sự nhập tay; "AUTOMATION_GEN_VIDEO" cho nhân sự sinh từ
-  /// team editor/content bên AutomationGenVideo. Chỉ dùng nội bộ, không hiển thị lên UI.
   sourceSystem      String?          @map("source_system") @db.VarChar(30)
-  /// id của User tương ứng bên hệ thống nguồn — khóa nhận diện idempotent cho sync.
-  /// `employeeCode` là mã hiển thị tự sinh và không nhận giá trị nhập tay từ HR.
   externalId        String?          @unique @map("external_id") @db.Uuid
   lastSyncedAt      DateTime?        @map("last_synced_at") @db.Timestamptz()
   createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz()
@@ -340,8 +313,8 @@ model Employee {
   @@map("employees")
 }
 
-/// Liên kết bền vững giữa một hồ sơ nhân sự nội bộ và tài khoản ở hệ thống nguồn. Mã nhân sự
-/// do nguồn gửi lên chỉ là metadata; khóa nhận diện là (sourceSystem, externalUserId).
+// Khóa nhận diện nhân sự khi sync là (sourceSystem, externalUserId) — mã/email do nguồn gửi lên
+// chỉ là metadata tham khảo, có thể đổi mà không được làm mất liên kết.
 model ExternalEmployeeIdentity {
   id                   Int      @id @default(autoincrement())
   employeeId           Int      @map("employee_id")
@@ -362,8 +335,8 @@ model ExternalEmployeeIdentity {
   @@map("external_employee_identities")
 }
 
-/// Một nhân sự có thể tham gia nhiều team. Employee.teamId tiếp tục phản ánh team chính để giữ
-/// tương thích với các consumer cũ; dữ liệu nghiệp vụ mới phải dùng membership.
+// Một nhân sự có thể thuộc nhiều team. Employee.teamId chỉ còn là team chính (giữ cho consumer cũ);
+// dữ liệu nghiệp vụ mới phải đi qua membership.
 model EmployeeTeamMembership {
   id                         Int       @id @default(autoincrement())
   employeeId                 Int       @map("employee_id")
@@ -387,6 +360,8 @@ model EmployeeTeamMembership {
   manager         Employee?                           @relation("MembershipManager", fields: [managerEmployeeId], references: [id], onDelete: SetNull)
   periodSnapshots PayrollPeriodEmployeeTeamSnapshot[]
 
+  // Migration còn có partial unique index (is_primary = true AND is_active = true) bảo đảm mỗi
+  // nhân sự chỉ có tối đa một team chính đang hoạt động — ràng buộc này Prisma không biểu diễn được.
   @@unique([employeeId, teamId])
   @@index([teamId, isActive])
   @@index([employeeId, isActive])
@@ -433,7 +408,7 @@ model UserRole {
   role      Role  @relation(fields: [roleId], references: [id], onDelete: Cascade)
   scopeTeam Team? @relation(fields: [scopeTeamId], references: [id])
 
-  // Migration dùng NULLS NOT DISTINCT để scopeTeamId=null vẫn thật sự unique trên PostgreSQL.
+  // Migration dùng NULLS NOT DISTINCT để scopeTeamId = null vẫn thật sự unique trên PostgreSQL.
   @@unique([userId, roleId, scopeType, scopeTeamId])
   @@map("user_roles")
 }
@@ -449,8 +424,6 @@ model RolePermission {
   @@map("role_permissions")
 }
 
-/// Một lượt sinh/đồng bộ nhân sự cho 1 team editor từ AutomationGenVideo (Admin/HR trigger thủ
-/// công theo từng team — không có cron tự động ở v1).
 model OrgSyncRun {
   id                String        @id @default(uuid()) @db.Uuid
   externalTeamId    String        @map("external_team_id") @db.Uuid
@@ -471,7 +444,6 @@ model OrgSyncRun {
   @@map("org_sync_runs")
 }
 
-/// Kết quả xử lý từng nhân sự (member) trong một OrgSyncRun — phục vụ tra soát khi có lỗi/skip.
 model OrgSyncRunItem {
   id                Int               @id @default(autoincrement())
   orgSyncRunId      String            @map("org_sync_run_id") @db.Uuid
@@ -484,21 +456,18 @@ model OrgSyncRunItem {
   run      OrgSyncRun @relation(fields: [orgSyncRunId], references: [id], onDelete: Cascade)
   employee Employee?  @relation(fields: [employeeId], references: [id])
 
-  // Vừa hỗ trợ FK/cascade theo run, vừa tránh sort khi mở chi tiết một lượt sync.
   @@index([orgSyncRunId, createdAt])
   @@map("org_sync_run_items")
 }
 
-/// Metadata file đính kèm (M03) — file thực nằm trên object storage (Supabase Storage), bảng này
-/// chỉ lưu metadata + storage_key để tra cứu/tạo signed URL khi cần.
 model FileAttachment {
   id               String   @id @default(uuid()) @db.Uuid
   uploadedByUserId String   @map("uploaded_by_user_id") @db.Uuid
   originalFileName String   @map("original_file_name") @db.VarChar(255)
   mimeType         String   @map("mime_type") @db.VarChar(120)
   fileSizeBytes    BigInt   @map("file_size_bytes")
-  /// Đường dẫn (object key) trong bucket Supabase Storage — private, chỉ dùng nội bộ để tạo
-  /// signed URL khi trả về cho client, không lộ trực tiếp ra API response.
+  // Object key trong bucket Supabase Storage (private) — chỉ dùng để tạo signed URL, không trả
+  // thẳng ra API response.
   storageKey       String   @map("storage_key")
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz()
 
@@ -508,11 +477,6 @@ model FileAttachment {
   @@map("file_attachments")
 }
 
-/// Kỳ tính lương (M04) — Admin mở/chuyển trạng thái. State machine một chiều:
-/// DRAFT -> OPEN -> IN_REVIEW -> CLOSED, không cho chuyển ngược.
-/// `rewardRuleSetId` thêm ở M05 (bảng reward_rule_sets đã tồn tại): tự động gán bằng
-/// RewardRuleSet đang ACTIVE khi mở kỳ (bước "validate reward rule set" hoãn từ M04) — kỳ giữ
-/// nguyên tham chiếu version đó vĩnh viễn kể cả khi sau này có version ACTIVE khác.
 model PayrollPeriod {
   id               Int                 @id @default(autoincrement())
   code             String              @unique @db.VarChar(20)
@@ -522,6 +486,8 @@ model PayrollPeriod {
   startDate        DateTime            @map("start_date") @db.Date
   endDate          DateTime            @map("end_date") @db.Date
   approvalDeadline DateTime?           @map("approval_deadline") @db.Timestamptz()
+  // Gán tự động bằng RewardRuleSet đang ACTIVE lúc mở kỳ và giữ nguyên vĩnh viễn, kể cả khi
+  // sau này có version ACTIVE khác.
   rewardRuleSetId  Int?                @map("reward_rule_set_id")
   status           PayrollPeriodStatus @default(DRAFT)
   openedByUserId   String?             @map("opened_by_user_id") @db.Uuid
@@ -529,34 +495,33 @@ model PayrollPeriod {
   closedAt         DateTime?           @map("closed_at") @db.Timestamptz()
   createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz()
 
-  openedBy                   User?                               @relation(fields: [openedByUserId], references: [id])
-  rewardRuleSet              RewardRuleSet?                      @relation("PayrollPeriodRewardRuleSet", fields: [rewardRuleSetId], references: [id])
-  employeeSnapshots          PayrollPeriodEmployeeSnapshot[]
-  employeeTeamSnapshots      PayrollPeriodEmployeeTeamSnapshot[]
-  auditLogs                  AuditLog[]
-  employeeRevenueRecords     EmployeeRevenueRecord[]
-  employeeTrafficRecords     EmployeeTrafficRecord[]
-  /// Ngược của RewardRuleSet.effectiveFromPeriodId — thường rỗng/0-1 phần tử, không dùng để
-  /// truy vấn trực tiếp, giữ vì Prisma yêu cầu khai báo 2 chiều cho relation có tên riêng.
-  effectiveForRewardRuleSets RewardRuleSet[]                     @relation("RewardRuleSetEffectiveFromPeriod")
-  kpiPeriodTargets           KpiPeriodTarget[]
-  employeeKpiTargets         EmployeeKpiTarget[]
-  kpiAssignments             EmployeeKpiAssignment[]
-  kpiActuals                 EmployeeKpiActual[]
-  okrs                       EmployeeOkr[]
-  proposals                  KpiOkrProposal[]
-  kpiSyncRuns                KpiSyncRun[]
-  salaryRecords              SalaryRecord[]
+  openedBy               User?                               @relation(fields: [openedByUserId], references: [id])
+  rewardRuleSet          RewardRuleSet?                      @relation("PayrollPeriodRewardRuleSet", fields: [rewardRuleSetId], references: [id])
+  employeeSnapshots      PayrollPeriodEmployeeSnapshot[]
+  employeeTeamSnapshots  PayrollPeriodEmployeeTeamSnapshot[]
+  auditLogs              AuditLog[]
+  employeeRevenueRecords EmployeeRevenueRecord[]
+  employeeTrafficRecords EmployeeTrafficRecord[]
+  kpiPeriodTargets       KpiPeriodTarget[]
+  employeeKpiTargets     EmployeeKpiTarget[]
+  kpiAssignments         EmployeeKpiAssignment[]
+  kpiActuals             EmployeeKpiActual[]
+  okrs                   EmployeeOkr[]
+  proposals              KpiOkrProposal[]
+  kpiSyncRuns            KpiSyncRun[]
+  salaryRecords          SalaryRecord[]
+
+  // Chiều ngược của RewardRuleSet.effectiveFromPeriodId — không dùng để truy vấn, chỉ tồn tại
+  // vì Prisma bắt khai báo hai chiều cho relation có tên.
+  effectiveForRewardRuleSets RewardRuleSet[] @relation("RewardRuleSetEffectiveFromPeriod")
 
   @@unique([payrollYear, payrollMonth])
-  @@index([payrollYear, payrollMonth])
   @@index([startDate(sort: Desc)])
   @@map("payroll_periods")
 }
 
-/// Doanh thu chính thức của một nhân sự trong một kỳ lương (M11). Đây là nguồn duy nhất được
-/// Salary Engine dùng để tra mốc hoa hồng; dữ liệu đối chiếu bên ngoài không được lưu vào đây.
-/// Chỉ actor có permission `revenue.write` được upsert, và mọi thay đổi phải có AuditLog.
+// Nguồn doanh thu DUY NHẤT mà Salary Engine dùng để tra mốc hoa hồng — dữ liệu đối chiếu từ
+// bên ngoài không được ghi vào đây.
 model EmployeeRevenueRecord {
   id                    Int      @id @default(autoincrement())
   employeeId            Int      @map("employee_id")
@@ -577,8 +542,7 @@ model EmployeeRevenueRecord {
   @@map("employee_revenue_records")
 }
 
-/// Traffic theo từng nền tảng của một nhân sự trong một kỳ lương (M10). Chỉ record đã được nhân
-/// sự xác nhận và Leader duyệt mới được tính là traffic hợp lệ cho RPM.
+// Chỉ record đã CONFIRMED và được leader APPROVED mới được tính traffic hợp lệ cho RPM.
 model EmployeeTrafficRecord {
   id                     Int                    @id @default(autoincrement())
   employeeId             Int                    @map("employee_id")
@@ -606,15 +570,13 @@ model EmployeeTrafficRecord {
   @@map("employee_traffic_records")
 }
 
-/// Bảng nối minh chứng đã upload với một dòng traffic. File có thể được dùng lại khi người dùng
-/// muốn cung cấp cùng một dashboard/export cho nhiều nền tảng.
 model TrafficRecordAttachment {
   employeeTrafficRecordId Int    @map("employee_traffic_record_id")
   fileAttachmentId        String @map("file_attachment_id") @db.Uuid
 
   employeeTrafficRecord EmployeeTrafficRecord @relation(fields: [employeeTrafficRecordId], references: [id], onDelete: Cascade)
-  // Không cascade từ file: minh chứng đã gắn phải được gỡ tường minh khỏi entity nháp trước,
-  // tránh mất bằng chứng của dữ liệu đã xác nhận/duyệt.
+  // Restrict (không cascade từ file): minh chứng đã gắn phải được gỡ tường minh, tránh mất bằng
+  // chứng của dữ liệu đã xác nhận/duyệt.
   fileAttachment        FileAttachment        @relation(fields: [fileAttachmentId], references: [id], onDelete: Restrict)
 
   @@id([employeeTrafficRecordId, fileAttachmentId])
@@ -622,8 +584,8 @@ model TrafficRecordAttachment {
   @@map("traffic_record_attachments")
 }
 
-/// Snapshot thông tin nhân sự tại thời điểm mở kỳ — cố định vĩnh viễn, không tự cập nhật khi
-/// nhân sự đổi team/leader/manager sau đó (đúng business rule "snapshot không tự thay đổi").
+// Snapshot chốt tại thời điểm mở kỳ và BẤT BIẾN — không tự cập nhật khi nhân sự đổi
+// team/leader/manager về sau.
 model PayrollPeriodEmployeeSnapshot {
   id                        Int      @id @default(autoincrement())
   payrollPeriodId           Int      @map("payroll_period_id")
@@ -631,8 +593,6 @@ model PayrollPeriodEmployeeSnapshot {
   employeeCodeSnapshot      String   @map("employee_code_snapshot") @db.VarChar(50)
   employeeNameSnapshot      String   @map("employee_name_snapshot") @db.VarChar(200)
   jobTitleSnapshot          String   @map("job_title_snapshot") @db.VarChar(100)
-  /// Mã nhóm nghiệp vụ tại thời điểm chốt kỳ (lưu code, không lưu FK) — đổi tên/xóa nhóm trong
-  /// danh mục không được làm sai lệch dữ liệu kỳ đã chốt.
   employeeGroupsSnapshot    String[] @default([]) @map("employee_groups_snapshot")
   teamIdSnapshot            Int?     @map("team_id_snapshot")
   teamCodeSnapshot          String?  @map("team_code_snapshot") @db.VarChar(50)
@@ -654,8 +614,8 @@ model PayrollPeriodEmployeeSnapshot {
   @@map("payroll_period_employee_snapshots")
 }
 
-/// Snapshot bất biến của từng membership tại lúc mở kỳ. salaryWeightPercent là tỷ trọng KPI của
-/// team trong kỳ và không đổi theo cấu trúc tổ chức live sau đó.
+// Snapshot bất biến của từng membership. salaryWeightPercent là tỷ trọng KPI của team trong kỳ
+// và không đổi theo cấu trúc tổ chức live sau đó.
 model PayrollPeriodEmployeeTeamSnapshot {
   id                        Int      @id @default(autoincrement())
   payrollPeriodId           Int      @map("payroll_period_id")
@@ -687,16 +647,14 @@ model PayrollPeriodEmployeeTeamSnapshot {
   @@map("payroll_period_employee_team_snapshots")
 }
 
-/// Bộ cấu hình mốc thưởng (M05) — mỗi version là một bản snapshot cấu hình tại 1 thời điểm.
-/// ACTIVE version không sửa trực tiếp (immutable); muốn đổi rule phải clone sang DRAFT mới rồi
-/// activate — activate sẽ tự động ARCHIVED version ACTIVE hiện tại (tại một thời điểm chỉ có
-/// đúng 1 version ACTIVE). `effectiveFromPeriodId` chỉ mang tính ghi chú "áp dụng từ kỳ nào",
-/// KHÔNG phải cơ chế gán rule set cho kỳ — việc đó do PayrollPeriod.rewardRuleSetId tự động
-/// nhận bản ACTIVE tại thời điểm mở kỳ đảm nhiệm.
+// Mỗi version là một snapshot cấu hình thưởng. Bản ACTIVE bất biến: muốn đổi rule phải clone
+// sang DRAFT rồi activate, và activate sẽ tự ARCHIVED bản ACTIVE cũ.
 model RewardRuleSet {
   id                          Int                 @id @default(autoincrement())
   version                     Int                 @unique
   achievementThresholdPercent Decimal             @map("achievement_threshold_percent") @db.Decimal(5, 2)
+  // Chỉ là ghi chú "áp dụng từ kỳ nào", KHÔNG phải cơ chế gán rule set cho kỳ — việc gán do
+  // PayrollPeriod.rewardRuleSetId đảm nhiệm lúc mở kỳ.
   effectiveFromPeriodId       Int?                @map("effective_from_period_id")
   status                      RewardRuleSetStatus @default(DRAFT)
   createdByUserId             String              @map("created_by_user_id") @db.Uuid
@@ -705,17 +663,15 @@ model RewardRuleSet {
   effectiveFromPeriod PayrollPeriod?         @relation("RewardRuleSetEffectiveFromPeriod", fields: [effectiveFromPeriodId], references: [id])
   createdBy           User                   @relation(fields: [createdByUserId], references: [id])
   revenueBrackets     RevenueRewardBracket[]
-  /// Các kỳ lương đã tự động gán version này lúc mở kỳ (xem PayrollPeriod.rewardRuleSetId).
   payrollPeriods      PayrollPeriod[]        @relation("PayrollPeriodRewardRuleSet")
   salaryRecords       SalaryRecord[]
 
-  // Migration có partial unique index bảo đảm tối đa một bản ACTIVE tại mọi thời điểm.
+  // Migration có partial unique index (WHERE status = 'ACTIVE') bảo đảm tối đa một bản ACTIVE.
   @@map("reward_rule_sets")
 }
 
-/// Mốc thưởng theo doanh thu trong một RewardRuleSet — match theo nửa khoảng
-/// [minRevenueAmount, maxRevenueAmount); bracket cao nhất có maxRevenueAmount = null.
-/// Chỉ được thêm/sửa/xóa khi rule set còn DRAFT (ACTIVE/ARCHIVED bất biến).
+// Match theo nửa khoảng [minRevenueAmount, maxRevenueAmount); bracket cao nhất có max = null.
+// Chỉ sửa được khi rule set còn DRAFT.
 model RevenueRewardBracket {
   id                    Int      @id @default(autoincrement())
   rewardRuleSetId       Int      @map("reward_rule_set_id")
@@ -734,10 +690,8 @@ model RevenueRewardBracket {
   @@map("revenue_reward_brackets")
 }
 
-/// Lịch sử lương cơ bản theo nhân sự (M05) — nửa khoảng [effectiveFrom, effectiveTo); bản ghi
-/// đang "hiện hành" có effectiveTo = null. Tạo bản ghi mới sẽ tự đóng effectiveTo của bản ghi
-/// hiện hành trước đó (xem BaseSalaryService.create). V1 chưa có attendance nên không prorate
-/// theo ngày công — dùng nguyên mức tháng có hiệu lực tại thời điểm tính lương.
+// Lịch sử theo nửa khoảng [effectiveFrom, effectiveTo); bản hiện hành có effectiveTo = null và
+// được service tự đóng lại khi tạo bản mới. V1 chưa prorate theo ngày công.
 model BaseSalaryHistory {
   id                Int       @id @default(autoincrement())
   employeeId        Int       @map("employee_id")
@@ -754,9 +708,8 @@ model BaseSalaryHistory {
   @@map("base_salary_histories")
 }
 
-/// Mức tiền thưởng của một nhóm KPI dành riêng cho một nhân sự, theo lịch sử hiệu lực dạng
-/// nửa khoảng [effectiveFrom, effectiveTo). Khi tạo mức mới, service tự đóng mức hiện hành cũ.
-/// M12 sẽ resolve đúng bản ghi có hiệu lực rồi snapshot rewardAmount vào salary record.
+// Cùng cơ chế nửa khoảng như BaseSalaryHistory. Salary engine resolve bản có hiệu lực rồi
+// snapshot rewardAmount vào salary record.
 model EmployeeKpiRewardRate {
   id              Int       @id @default(autoincrement())
   employeeId      Int       @map("employee_id")
@@ -778,9 +731,6 @@ model EmployeeKpiRewardRate {
   @@map("employee_kpi_reward_rates")
 }
 
-/// Nhóm KPI (M06) — có thể áp dụng cho nhiều Team. `teams` rỗng chỉ dành cho nhóm dữ liệu cũ,
-/// được hiểu là dùng chung toàn hệ thống để không làm mất hiệu lực các assignment lịch sử.
-/// Nhóm mới phải chọn ít nhất một team ở API/UI. `isActive=false` là soft-disable, không xóa.
 model KpiGroup {
   id              Int           @id @default(autoincrement())
   code            String        @unique @db.VarChar(80)
@@ -793,8 +743,9 @@ model KpiGroup {
   updatedAt       DateTime      @updatedAt @map("updated_at") @db.Timestamptz()
 
   createdBy                User            @relation(fields: [createdByUserId], references: [id])
+  // Rỗng chỉ còn ở dữ liệu cũ và được hiểu là dùng chung toàn hệ thống; nhóm mới bắt buộc chọn team.
   teams                    Team[]          @relation("KpiGroupTeams")
-  /// Rỗng = chỉ gán thủ công. Có giá trị = tự gán khi mở kỳ cho nhân sự có ít nhất một nhóm khớp.
+  // Rỗng = chỉ gán thủ công. Có giá trị = tự gán khi mở kỳ cho nhân sự khớp ít nhất một nhóm.
   applicableEmployeeGroups EmployeeGroup[] @relation("KpiGroupEmployeeGroups")
 
   items       KpiItem[]
@@ -806,9 +757,8 @@ model KpiGroup {
   @@map("kpi_groups")
 }
 
-/// Đầu mục trong một KpiGroup — target nằm riêng ở KpiPeriodTarget (không lưu trên item), vì
-/// target thay đổi theo từng kỳ còn item là định nghĩa cố định. `code` được hệ thống tự sinh và
-/// bất biến sau khi tạo.
+// Định nghĩa cố định của một đầu mục; target không nằm ở đây mà ở KpiPeriodTarget vì target
+// thay đổi theo từng kỳ. `code` do hệ thống sinh và bất biến sau khi tạo.
 model KpiItem {
   id         Int      @id @default(autoincrement())
   kpiGroupId Int      @map("kpi_group_id")
@@ -830,9 +780,7 @@ model KpiItem {
   @@map("kpi_items")
 }
 
-/// Target của 1 KpiItem trong 1 kỳ lương cụ thể — mỗi kỳ độc lập (đổi target kỳ này không ảnh
-/// hưởng kỳ khác, đúng UNIQUE(kpi_item_id, payroll_period_id)). Set qua PUT (upsert) — idempotent
-/// theo đúng nguyên tắc kiến trúc bắt buộc (mục 5.7).
+// Target mặc định của một KpiItem trong một kỳ. Mỗi kỳ độc lập; set qua PUT (upsert, idempotent).
 model KpiPeriodTarget {
   id              Int      @id @default(autoincrement())
   kpiItemId       Int      @map("kpi_item_id")
@@ -851,9 +799,8 @@ model KpiPeriodTarget {
   @@map("kpi_period_targets")
 }
 
-/// Target riêng của một nhân sự cho một đầu mục KPI trong một kỳ. Khi tồn tại, target này
-/// được ưu tiên hơn KpiPeriodTarget (target mặc định cả kỳ) lúc tính tiến độ; không ghi đè
-/// cấu hình chung để leader có thể điều chỉnh riêng cho từng thành viên trong phạm vi team.
+// Target riêng của một nhân sự. Khi tồn tại, bản ghi này được ưu tiên hơn KpiPeriodTarget lúc
+// tính tiến độ, nhưng KHÔNG ghi đè cấu hình chung của kỳ.
 model EmployeeKpiTarget {
   id                 Int                @id @default(autoincrement())
   employeeId         Int                @map("employee_id")
@@ -885,9 +832,8 @@ model EmployeeKpiTarget {
   @@map("employee_kpi_targets")
 }
 
-/// Gán 1 KpiGroup cho 1 nhân sự trong 1 kỳ lương (M07) — điều kiện bắt buộc để nhân sự được nhập
-/// actual cho các item thuộc group đó trong kỳ. Khi tạo, service tự tạo kèm các EmployeeKpiActual
-/// (mặc định 0/DRAFT/PENDING) cho mọi KpiItem đang active của group — xem KpiAssignmentsService.
+// Điều kiện bắt buộc để nhân sự được nhập actual cho các item của group trong kỳ. Khi tạo,
+// service sinh kèm EmployeeKpiActual (0/DRAFT/PENDING) cho mọi KpiItem đang active của group.
 model EmployeeKpiAssignment {
   id               Int                 @id @default(autoincrement())
   employeeId       Int                 @map("employee_id")
@@ -910,10 +856,8 @@ model EmployeeKpiAssignment {
   @@map("employee_kpi_assignments")
 }
 
-/// Actual của 1 KpiItem cho 1 nhân sự trong 1 kỳ (M07) — effective_actual dùng bởi engine tính
-/// lương (M12) = override_value ?? actual_value. Chỉ sửa được actual_value/self_assessment khi
-/// self_confirmation_status = DRAFT ("Draft => confirmed", "Rejected => editable", "Approved data
-/// protected" — 3 case còn lại của state machine không cho PUT trực tiếp).
+// Giá trị salary engine dùng là effective actual = overrideValue ?? actualValue.
+// actualValue/selfAssessment chỉ sửa được khi selfConfirmationStatus = DRAFT.
 model EmployeeKpiActual {
   id                     Int                    @id @default(autoincrement())
   employeeId             Int                    @map("employee_id")
@@ -956,7 +900,6 @@ model EmployeeKpiActual {
   @@map("employee_kpi_actuals")
 }
 
-/// Một lượt kéo snapshot KPI từ AutomationGenVideo cho một team/kỳ lương.
 model KpiSyncRun {
   id                String        @id @default(uuid()) @db.Uuid
   externalTeamId    String        @map("external_team_id") @db.Uuid
@@ -981,14 +924,14 @@ model KpiSyncRun {
   triggeredBy   User             @relation(fields: [triggeredByUserId], references: [id])
   items         KpiSyncRunItem[]
 
+  // Migration có thêm partial unique index (WHERE status = 'RUNNING') để không thể có hai run
+  // đang chạy cùng team/tháng.
   @@index([startedAt(sort: Desc)])
-  // Migration có thêm partial unique index để không thể có hai run RUNNING cùng team/tháng.
   @@index([externalTeamId, month, status])
   @@index([payrollPeriodId])
   @@map("kpi_sync_runs")
 }
 
-/// Kết quả áp dụng từng target/actual trong một lượt đồng bộ.
 model KpiSyncRunItem {
   id                   Int               @id @default(autoincrement())
   kpiSyncRunId         String            @map("kpi_sync_run_id") @db.Uuid
@@ -1019,9 +962,7 @@ model KpiSyncRunItem {
   employeeKpiTarget EmployeeKpiTarget? @relation(fields: [employeeKpiTargetId], references: [id])
   employeeKpiActual EmployeeKpiActual? @relation(fields: [employeeKpiActualId], references: [id])
 
-  // Một index phục vụ cả FK/cascade, groupBy trạng thái và thứ tự hiển thị chi tiết run.
   @@index([kpiSyncRunId, resultStatus, id])
-  // Salary engine tra xung đột chưa xử lý theo từng nhân sự trong kỳ.
   @@index([employeeId, resultStatus, id(sort: Desc)], map: "kpi_sync_run_items_employee_status_id_idx")
   // Cần cho ON DELETE SET NULL khi xóa KPI item chưa phát sinh dữ liệu nghiệp vụ.
   @@index([kpiItemId])
@@ -1029,12 +970,9 @@ model KpiSyncRunItem {
   @@map("kpi_sync_run_items")
 }
 
-/// OKR của 1 nhân sự trong 1 kỳ (M08) — Leader/Admin tạo (target/reward_amount, quyền `okr.create`),
-/// nhân sự chỉ tự cập nhật actual_value/self_assessment (quyền `okr.update_self`, chỉ khi DRAFT).
-/// Không có bảng "assignment" riêng như M07 — OKR tạo thẳng, không cần bước gán trước.
-/// `weight_percent` KHÔNG tồn tại (đúng spec V1). progress = MIN(actual/target, 100%) tính động ở
-/// API, không lưu cột riêng — reward_amount là số tiền cố định khi đạt threshold, việc so sánh với
-/// threshold (`reward_rule_sets.achievement_threshold_percent`) và cộng vào lương thuộc M12.
+// Không có bảng assignment riêng như KPI: Leader/Admin tạo thẳng OKR kèm target và rewardAmount,
+// nhân sự chỉ tự cập nhật actualValue/selfAssessment khi còn DRAFT.
+// progress = MIN(actual/target, 100%) tính động ở API, không lưu cột riêng.
 model EmployeeOkr {
   id                     Int                    @id @default(autoincrement())
   employeeId             Int                    @map("employee_id")
@@ -1069,17 +1007,8 @@ model EmployeeOkr {
   @@map("employee_okrs")
 }
 
-/// Đề xuất KPI item mới hoặc OKR mới do Editor/Content Creator gửi (quyền `okr.propose` — dùng
-/// chung cho cả 2 loại, đúng tên permission trong catalog "Đề xuất KPI/OKR mới"), Leader/Admin
-/// duyệt (`kpi.leader_approve` HOẶC `okr.leader_approve` — không có permission riêng cho việc
-/// duyệt proposal trong catalog, dùng OR 2 quyền theo đúng loại đề xuất tương ứng).
-///
-/// Khi approve OKR: tự tạo `EmployeeOkr` (result_entity_type='EmployeeOkr'), đầy đủ field vì
-/// proposal có sẵn proposed_target_value + proposed_reward_amount (bắt buộc validate khi tạo
-/// proposal loại OKR, vì employee_okrs.reward_amount NOT NULL).
-///
-/// Khi approve KPI_ITEM: hiện chỉ chuyển status APPROVED, chưa tự tạo KpiItem; Admin/Leader tạo
-/// đầu mục ở tab Cấu hình KPI sau khi duyệt. Mã đầu mục ở bước đó được hệ thống tự sinh.
+// Approve OKR: tự tạo EmployeeOkr và ghi lại ở resultEntityType/resultEntityId.
+// Approve KPI_ITEM: chỉ chuyển status APPROVED, KpiItem vẫn phải tạo tay ở tab Cấu hình KPI.
 model KpiOkrProposal {
   id                   Int            @id @default(autoincrement())
   payrollPeriodId      Int            @map("payroll_period_id")
@@ -1096,8 +1025,6 @@ model KpiOkrProposal {
   reviewedByUserId     String?        @map("reviewed_by_user_id") @db.Uuid
   reviewedAt           DateTime?      @map("reviewed_at") @db.Timestamptz()
   rejectionReason      String?        @map("rejection_reason")
-  /// "EmployeeOkr" khi approve OKR tự tạo được entity; null cho KPI_ITEM (chưa tự tạo, xem ghi chú
-  /// model) hoặc khi chưa được duyệt.
   resultEntityType     String?        @map("result_entity_type") @db.VarChar(30)
   resultEntityId       Int?           @map("result_entity_id")
   createdAt            DateTime       @default(now()) @map("created_at") @db.Timestamptz()
@@ -1112,8 +1039,8 @@ model KpiOkrProposal {
   @@map("kpi_okr_proposals")
 }
 
-/// Bản snapshot kết quả tính lương của một nhân sự trong một kỳ. M12 chỉ cập nhật version hiện
-/// hành khi còn PENDING/WARNING; LOCKED bất biến và việc tạo revision thuộc M14.
+// Snapshot kết quả tính lương. Chỉ cập nhật được version hiện hành khi còn PENDING/WARNING;
+// bản LOCKED bất biến, sửa lại phải tạo revision mới (parentSalaryRecordId).
 model SalaryRecord {
   id                            Int                @id @default(autoincrement())
   employeeId                    Int                @map("employee_id")
@@ -1161,7 +1088,6 @@ model SalaryRecord {
   @@map("salary_records")
 }
 
-/// Snapshot kết quả của từng nhóm KPI độc lập tại thời điểm tính lương.
 model SalaryRecordKpiItem {
   id                                  Int      @id @default(autoincrement())
   salaryRecordId                      Int      @map("salary_record_id")
@@ -1186,7 +1112,6 @@ model SalaryRecordKpiItem {
   @@map("salary_record_kpi_items")
 }
 
-/// Snapshot kết quả của từng OKR độc lập tại thời điểm tính lương.
 model SalaryRecordOkrItem {
   id                                  Int      @id @default(autoincrement())
   salaryRecordId                      Int      @map("salary_record_id")
@@ -1207,7 +1132,7 @@ model SalaryRecordOkrItem {
   @@map("salary_record_okr_items")
 }
 
-/// Cấu phần mở để M14 hoặc nghiệp vụ tương lai thêm khoản thủ công mà không đổi schema engine.
+// Cấu phần mở để thêm khoản thủ công mà không phải đổi schema của engine.
 model SalaryRecordComponent {
   id              Int                   @id @default(autoincrement())
   salaryRecordId  Int                   @map("salary_record_id")
@@ -1226,8 +1151,8 @@ model SalaryRecordComponent {
   @@map("salary_record_components")
 }
 
-/// Nhật ký bất biến của các thay đổi nghiệp vụ. Được tạo sớm từ M04 và hoàn thiện ở M13 với API
-/// xem/lọc/xuất CSV có scope SELF/TEAM/ALL; các index bên dưới phục vụ các bộ lọc vận hành chính.
+// Nhật ký bất biến. Các index bên dưới phục vụ trực tiếp bộ lọc của API xem/xuất CSV theo
+// scope SELF/TEAM/ALL.
 model AuditLog {
   id                   Int      @id @default(autoincrement())
   actorUserId          String   @map("actor_user_id") @db.Uuid
@@ -1256,9 +1181,8 @@ model AuditLog {
   @@map("audit_logs")
 }
 
-/// Thông báo trong ứng dụng cho một tài khoản cụ thể. Đối tượng tham chiếu dùng String vì các
-/// entity nghiệp vụ hiện có cả khóa Int và UUID. Quyền xem luôn được chặn bằng recipientUserId,
-/// không dựa vào reference để tránh lộ dữ liệu qua hộp thư.
+// referenceEntityId là String vì các entity nghiệp vụ có cả khóa Int lẫn UUID. Quyền xem luôn
+// chặn bằng recipientUserId, không dựa vào reference.
 model Notification {
   id                  Int       @id @default(autoincrement())
   recipientUserId     String    @map("recipient_user_id") @db.Uuid
