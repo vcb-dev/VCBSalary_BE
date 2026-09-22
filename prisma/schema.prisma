@@ -3,32 +3,1277 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
-enum Role {
-  ADMIN
-  HR
+enum UserStatus {
+  ACTIVE
+  LOCKED
+  DISABLED
 }
 
+enum ScopeType {
+  SELF
+  TEAM
+  ALL
+}
+
+enum TeamStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum DepartmentStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum EmploymentStatus {
+  ACTIVE
+  INACTIVE
+  LEFT
+}
+
+enum EmployeeGroupStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum OrgSyncStatus {
+  RUNNING
+  SUCCESS
+  PARTIAL
+  FAILED
+}
+
+enum OrgSyncItemStatus {
+  SUCCESS
+  SKIPPED
+  FAILED
+}
+
+enum KpiSyncStatus {
+  RUNNING
+  SUCCESS
+  PARTIAL
+  FAILED
+  SKIPPED
+}
+
+enum KpiSyncItemStatus {
+  SUCCESS
+  SKIPPED
+  FAILED
+  CONFLICT
+}
+
+enum KpiSyncRecordKind {
+  TARGET
+  ACTUAL
+}
+
+enum KpiValueDataSource {
+  MANUAL
+  AUTOMATION_GEN_VIDEO
+}
+
+enum PayrollPeriodStatus {
+  DRAFT
+  OPEN
+  IN_REVIEW
+  CLOSED
+}
+
+enum RewardRuleSetStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+/// Nguồn cấu hình của nhóm KPI — dùng nội bộ để phân biệt nhóm nhập tay với nhóm được đồng bộ
+/// từ AutomationGenVideo, KHÔNG hiển thị label kỹ thuật này cho employee.
+enum KpiDataSource {
+  INTERNAL
+  AUTOMATION_GEN_VIDEO
+}
+
+/// Trạng thái gán KPI group cho nhân sự trong 1 kỳ (M07) — DELETE endpoint chuyển sang CANCELLED
+/// (soft, giữ lịch sử) chứ không xóa cứng, đúng nguyên tắc chung không hard-delete dữ liệu nghiệp vụ.
+enum KpiAssignmentStatus {
+  ASSIGNED
+  CANCELLED
+}
+
+/// Trạng thái tự xác nhận của employee — chỉ 2 giá trị theo ERD. Khi Leader reject, giá trị này bị
+/// reset về DRAFT để nhân sự sửa lại rồi resubmit (đúng workflow "Rejected => editable => resubmit").
+/// Dùng chung cho employee_kpi_actuals (M07) và employee_okrs (M08) — cùng 1 workflow, cùng field.
+enum SelfConfirmationStatus {
+  DRAFT
+  CONFIRMED
+}
+
+/// Trạng thái duyệt cấp Leader — PENDING là giá trị mặc định (kể cả khi chưa CONFIRMED, chưa có gì
+/// để duyệt); chỉ đổi khi Leader approve/reject một actual đã CONFIRMED. Dùng chung cho
+/// employee_kpi_actuals (M07) và employee_okrs (M08).
+enum LeaderReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum SalaryRecordStatus {
+  PENDING
+  WARNING
+  LOCKED
+  SUPERSEDED
+}
+
+enum SalaryComponentSource {
+  MANUAL
+  SYSTEM
+}
+
+enum TrafficPlatform {
+  TIKTOK
+  FACEBOOK
+  YOUTUBE
+  INSTAGRAM
+}
+
+/// Loại đề xuất trong kpi_okr_proposals (M08) — quyết định proposed_kpi_group_id bắt buộc hay
+/// không (KPI_ITEM: bắt buộc, cần biết thêm vào group nào; OKR: không dùng group).
+enum ProposalType {
+  KPI_ITEM
+  OKR
+}
+
+enum ProposalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/// fullName vẫn giữ trên users (không có trong ERD) vì không phải user nào
+/// cũng gắn với employee (vd. tài khoản Admin/HR thuần hệ thống) — dùng làm
+/// display name mặc định khi user chưa liên kết employee.
 model User {
-  id            String         @id @default(uuid())
-  email         String         @unique
-  password      String
-  fullName      String
-  role          Role           @default(HR)
-  refreshTokens RefreshToken[]
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  id                    String     @id @default(uuid()) @db.Uuid
+  employeeId            Int?       @unique @map("employee_id")
+  email                 String     @unique @db.VarChar(255)
+  passwordHash          String     @map("password_hash")
+  fullName              String     @map("full_name") @db.VarChar(200)
+  status                UserStatus @default(ACTIVE)
+  lastLoginAt           DateTime?  @map("last_login_at") @db.Timestamptz()
+  refreshTokenHash      String?    @unique @map("refresh_token_hash")
+  refreshTokenExpiresAt DateTime?  @map("refresh_token_expires_at") @db.Timestamptz()
+  createdAt             DateTime   @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt             DateTime   @updatedAt @map("updated_at") @db.Timestamptz()
+
+  employee                      Employee?               @relation(fields: [employeeId], references: [id])
+  userRoles                     UserRole[]
+  uploadedFiles                 FileAttachment[]
+  openedPeriods                 PayrollPeriod[]
+  actorAuditLogs                AuditLog[]
+  notifications                 Notification[]
+  triggeredOrgSyncRuns          OrgSyncRun[]
+  triggeredKpiSyncRuns          KpiSyncRun[]
+  createdRewardRuleSets         RewardRuleSet[]
+  createdBaseSalaryHistories    BaseSalaryHistory[]
+  createdEmployeeKpiRewardRates EmployeeKpiRewardRate[]
+  createdKpiGroups              KpiGroup[]
+  createdKpiPeriodTargets       KpiPeriodTarget[]
+  createdEmployeeKpiTargets     EmployeeKpiTarget[]
+  overriddenEmployeeKpiTargets  EmployeeKpiTarget[]     @relation("KpiTargetOverriddenBy")
+  assignedKpiAssignments        EmployeeKpiAssignment[] @relation("KpiAssignmentAssignedBy")
+  selfConfirmedKpiActuals       EmployeeKpiActual[]     @relation("KpiActualSelfConfirmedBy")
+  leaderReviewedKpiActuals      EmployeeKpiActual[]     @relation("KpiActualLeaderReviewedBy")
+  overriddenKpiActuals          EmployeeKpiActual[]     @relation("KpiActualOverriddenBy")
+  selfConfirmedOkrs             EmployeeOkr[]           @relation("OkrSelfConfirmedBy")
+  leaderReviewedOkrs            EmployeeOkr[]           @relation("OkrLeaderReviewedBy")
+  reviewedProposals             KpiOkrProposal[]        @relation("ProposalReviewedBy")
+  enteredRevenueRecords         EmployeeRevenueRecord[] @relation("RevenueEnteredBy")
+  updatedRevenueRecords         EmployeeRevenueRecord[] @relation("RevenueUpdatedBy")
+  selfConfirmedTrafficRecords   EmployeeTrafficRecord[] @relation("TrafficSelfConfirmedBy")
+  leaderReviewedTrafficRecords  EmployeeTrafficRecord[] @relation("TrafficLeaderReviewedBy")
+  calculatedSalaryRecords       SalaryRecord[]          @relation("SalaryCalculatedBy")
+  approvedSalaryRecords         SalaryRecord[]          @relation("SalaryApprovedBy")
+  createdSalaryComponents       SalaryRecordComponent[]
+
+  @@index([createdAt(sort: Desc)])
+  @@map("users")
 }
 
-model RefreshToken {
-  id        String    @id @default(uuid())
-  userId    String
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenHash String    @unique
-  expiresAt DateTime
-  revokedAt DateTime?
-  createdAt DateTime  @default(now())
+model Department {
+  id        Int              @id @default(autoincrement())
+  code      String           @unique @db.VarChar(50)
+  name      String           @db.VarChar(150)
+  status    DepartmentStatus @default(ACTIVE)
+  createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt DateTime         @updatedAt @map("updated_at") @db.Timestamptz()
+
+  teams          Team[]
+  employeeGroups EmployeeGroup[]
+
+  @@map("departments")
+}
+
+/// Danh mục nhóm nghiệp vụ dùng để tự động gán KPI khi mở kỳ (vd. Editor, Content Creator của
+/// Marketing). Một nhân sự có thể thuộc nhiều nhóm — các nhóm bổ sung cho nhau, không loại trừ.
+/// `departmentId` NULL = nhóm dùng chung mọi phòng ban; có giá trị = chỉ chọn được ở phòng ban đó.
+/// `isActive=false` (status) là soft-disable: nhóm cũ vẫn giữ nguyên dữ liệu đã gán, chỉ không
+/// còn xuất hiện khi gán mới.
+model EmployeeGroup {
+  id               Int                 @id @default(autoincrement())
+  code             String              @unique @db.VarChar(50)
+  name             String              @db.VarChar(150)
+  description      String?
+  departmentId     Int?                @map("department_id")
+  /// Vai trò mặc định (scope SELF) gán cho tài khoản của nhân sự thuộc nhóm này. NULL = không suy
+  /// vai trò nào. Thay cho quy ước ngầm cũ "role.code phải trùng mã nhóm nghiệp vụ".
+  defaultRoleId    Int?                @map("default_role_id")
+  /// Từ khóa (đã bỏ dấu, viết hoa) để đoán nhóm từ chức danh khi tạo nhân sự mà không chọn nhóm
+  /// thủ công. Rỗng = không bao giờ tự đoán. Thay cho bảng regex cứng trong employees.service.
+  jobTitleKeywords String[]            @default([]) @map("job_title_keywords")
+  status           EmployeeGroupStatus @default(ACTIVE)
+  createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt        DateTime            @updatedAt @map("updated_at") @db.Timestamptz()
+
+  department  Department? @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  defaultRole Role?       @relation(fields: [defaultRoleId], references: [id], onDelete: SetNull)
+  employees   Employee[]  @relation("EmployeeEmployeeGroups")
+  kpiGroups   KpiGroup[]  @relation("KpiGroupEmployeeGroups")
+
+  @@index([departmentId])
+  @@map("employee_groups")
+}
+
+model Team {
+  id           Int        @id @default(autoincrement())
+  code         String     @unique @db.VarChar(50)
+  name         String     @db.VarChar(150)
+  status       TeamStatus @default(ACTIVE)
+  departmentId Int        @map("department_id")
+  /// Nguồn dữ liệu — NULL cho team nhập tay (vd. team kinh doanh); "AUTOMATION_GEN_VIDEO"
+  /// cho team editor/content được sinh từ dự án AutomationGenVideo. Chỉ dùng nội bộ để biết
+  /// trường nào do sync ghi đè, không hiển thị lên UI.
+  sourceSystem String?    @map("source_system") @db.VarChar(30)
+  /// id của Team tương ứng bên hệ thống nguồn — dùng để nhận diện idempotent khi sync chạy lại.
+  /// `code` chỉ là mã hiển thị do hệ thống tự sinh, người dùng không phải nhập hoặc quản lý.
+  externalId   String?    @unique @map("external_id") @db.Uuid
+  lastSyncedAt DateTime?  @map("last_synced_at") @db.Timestamptz()
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz()
+
+  department                Department                          @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  employees                 Employee[]
+  employeeMemberships       EmployeeTeamMembership[]
+  periodMembershipSnapshots PayrollPeriodEmployeeTeamSnapshot[]
+  kpiAssignments            EmployeeKpiAssignment[]
+  kpiTargets                EmployeeKpiTarget[]
+  kpiActuals                EmployeeKpiActual[]
+  kpiSyncItems              KpiSyncRunItem[]
+  salaryKpiItems            SalaryRecordKpiItem[]
+  scopedUserRoles           UserRole[]
+  kpiGroups                 KpiGroup[]                          @relation("KpiGroupTeams")
+
+  @@index([departmentId])
+  @@map("teams")
+}
+
+model Employee {
+  id                Int              @id @default(autoincrement())
+  employeeCode      String           @unique @map("employee_code") @db.VarChar(50)
+  fullName          String           @map("full_name") @db.VarChar(200)
+  jobTitle          String           @map("job_title") @db.VarChar(100)
+  teamId            Int              @map("team_id")
+  leaderEmployeeId  Int?             @map("leader_employee_id")
+  managerEmployeeId Int?             @map("manager_employee_id")
+  employmentStatus  EmploymentStatus @default(ACTIVE) @map("employment_status")
+  joinedAt          DateTime?        @map("joined_at") @db.Date
+  leftAt            DateTime?        @map("left_at") @db.Date
+  /// Nguồn dữ liệu — NULL cho nhân sự nhập tay; "AUTOMATION_GEN_VIDEO" cho nhân sự sinh từ
+  /// team editor/content bên AutomationGenVideo. Chỉ dùng nội bộ, không hiển thị lên UI.
+  sourceSystem      String?          @map("source_system") @db.VarChar(30)
+  /// id của User tương ứng bên hệ thống nguồn — khóa nhận diện idempotent cho sync.
+  /// `employeeCode` là mã hiển thị tự sinh và không nhận giá trị nhập tay từ HR.
+  externalId        String?          @unique @map("external_id") @db.Uuid
+  lastSyncedAt      DateTime?        @map("last_synced_at") @db.Timestamptz()
+  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt         DateTime         @updatedAt @map("updated_at") @db.Timestamptz()
+
+  team           Team            @relation(fields: [teamId], references: [id])
+  employeeGroups EmployeeGroup[] @relation("EmployeeEmployeeGroups")
+  leader         Employee?       @relation("EmployeeLeader", fields: [leaderEmployeeId], references: [id])
+  manager        Employee?       @relation("EmployeeManager", fields: [managerEmployeeId], references: [id])
+
+  ledEmployees     Employee[] @relation("EmployeeLeader")
+  managedEmployees Employee[] @relation("EmployeeManager")
+  user             User?
+
+  payrollPeriodSnapshots     PayrollPeriodEmployeeSnapshot[]
+  targetAuditLogs            AuditLog[]
+  orgSyncItems               OrgSyncRunItem[]
+  kpiSyncItems               KpiSyncRunItem[]
+  baseSalaryHistories        BaseSalaryHistory[]
+  kpiRewardRates             EmployeeKpiRewardRate[]
+  kpiAssignments             EmployeeKpiAssignment[]
+  kpiTargets                 EmployeeKpiTarget[]
+  kpiActuals                 EmployeeKpiActual[]
+  okrs                       EmployeeOkr[]
+  proposals                  KpiOkrProposal[]
+  revenueRecords             EmployeeRevenueRecord[]
+  trafficRecords             EmployeeTrafficRecord[]
+  salaryRecords              SalaryRecord[]
+  externalIdentities         ExternalEmployeeIdentity[]
+  teamMemberships            EmployeeTeamMembership[]            @relation("MembershipEmployee")
+  ledTeamMemberships         EmployeeTeamMembership[]            @relation("MembershipLeader")
+  managedTeamMemberships     EmployeeTeamMembership[]            @relation("MembershipManager")
+  periodTeamSnapshots        PayrollPeriodEmployeeTeamSnapshot[] @relation("PeriodTeamSnapshotEmployee")
+  periodLedTeamSnapshots     PayrollPeriodEmployeeTeamSnapshot[] @relation("PeriodTeamSnapshotLeader")
+  periodManagedTeamSnapshots PayrollPeriodEmployeeTeamSnapshot[] @relation("PeriodTeamSnapshotManager")
+
+  @@index([teamId])
+  @@index([leaderEmployeeId])
+  @@index([managerEmployeeId])
+  @@map("employees")
+}
+
+/// Liên kết bền vững giữa một hồ sơ nhân sự nội bộ và tài khoản ở hệ thống nguồn. Mã nhân sự
+/// do nguồn gửi lên chỉ là metadata; khóa nhận diện là (sourceSystem, externalUserId).
+model ExternalEmployeeIdentity {
+  id                   Int      @id @default(autoincrement())
+  employeeId           Int      @map("employee_id")
+  sourceSystem         String   @map("source_system") @db.VarChar(30)
+  externalUserId       String   @map("external_user_id") @db.Uuid
+  externalEmployeeCode String?  @map("external_employee_code") @db.VarChar(100)
+  lastKnownEmail       String?  @map("last_known_email") @db.VarChar(255)
+  lastKnownName        String?  @map("last_known_name") @db.VarChar(200)
+  lastSyncedAt         DateTime @default(now()) @map("last_synced_at") @db.Timestamptz()
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt            DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceSystem, externalUserId])
+  @@index([employeeId])
+  @@index([lastKnownEmail])
+  @@map("external_employee_identities")
+}
+
+/// Một nhân sự có thể tham gia nhiều team. Employee.teamId tiếp tục phản ánh team chính để giữ
+/// tương thích với các consumer cũ; dữ liệu nghiệp vụ mới phải dùng membership.
+model EmployeeTeamMembership {
+  id                         Int       @id @default(autoincrement())
+  employeeId                 Int       @map("employee_id")
+  teamId                     Int       @map("team_id")
+  isPrimary                  Boolean   @default(false) @map("is_primary")
+  defaultSalaryWeightPercent Decimal   @default(100) @map("default_salary_weight_percent") @db.Decimal(5, 2)
+  leaderEmployeeId           Int?      @map("leader_employee_id")
+  managerEmployeeId          Int?      @map("manager_employee_id")
+  joinedAt                   DateTime? @map("joined_at") @db.Date
+  leftAt                     DateTime? @map("left_at") @db.Date
+  isActive                   Boolean   @default(true) @map("is_active")
+  sourceSystem               String?   @map("source_system") @db.VarChar(30)
+  externalTeamId             String?   @map("external_team_id") @db.Uuid
+  lastSyncedAt               DateTime? @map("last_synced_at") @db.Timestamptz()
+  createdAt                  DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt                  DateTime  @updatedAt @map("updated_at") @db.Timestamptz()
+
+  employee        Employee                            @relation("MembershipEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
+  team            Team                                @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  leader          Employee?                           @relation("MembershipLeader", fields: [leaderEmployeeId], references: [id], onDelete: SetNull)
+  manager         Employee?                           @relation("MembershipManager", fields: [managerEmployeeId], references: [id], onDelete: SetNull)
+  periodSnapshots PayrollPeriodEmployeeTeamSnapshot[]
+
+  @@unique([employeeId, teamId])
+  @@index([teamId, isActive])
+  @@index([employeeId, isActive])
+  @@index([leaderEmployeeId])
+  @@index([managerEmployeeId])
+  @@map("employee_team_memberships")
+}
+
+model Role {
+  id           Int      @id @default(autoincrement())
+  code         String   @unique @db.VarChar(80)
+  name         String   @db.VarChar(150)
+  description  String?
+  isSystemRole Boolean  @default(false) @map("is_system_role")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  userRoles                UserRole[]
+  rolePermissions          RolePermission[]
+  defaultForEmployeeGroups EmployeeGroup[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          Int     @id @default(autoincrement())
+  code        String  @unique @db.VarChar(120)
+  name        String  @db.VarChar(150)
+  description String?
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model UserRole {
+  id          Int       @id @default(autoincrement())
+  userId      String    @map("user_id") @db.Uuid
+  roleId      Int       @map("role_id")
+  scopeType   ScopeType @map("scope_type")
+  scopeTeamId Int?      @map("scope_team_id")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  user      User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role  @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  scopeTeam Team? @relation(fields: [scopeTeamId], references: [id])
+
+  // Migration dùng NULLS NOT DISTINCT để scopeTeamId=null vẫn thật sự unique trên PostgreSQL.
+  @@unique([userId, roleId, scopeType, scopeTeamId])
+  @@map("user_roles")
+}
+
+model RolePermission {
+  roleId       Int @map("role_id")
+  permissionId Int @map("permission_id")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+/// Một lượt sinh/đồng bộ nhân sự cho 1 team editor từ AutomationGenVideo (Admin/HR trigger thủ
+/// công theo từng team — không có cron tự động ở v1).
+model OrgSyncRun {
+  id                String        @id @default(uuid()) @db.Uuid
+  externalTeamId    String        @map("external_team_id") @db.Uuid
+  triggeredByUserId String?       @map("triggered_by_user_id") @db.Uuid
+  status            OrgSyncStatus @default(RUNNING)
+  startedAt         DateTime      @default(now()) @map("started_at") @db.Timestamptz()
+  finishedAt        DateTime?     @map("finished_at") @db.Timestamptz()
+  totalRecords      Int           @default(0) @map("total_records")
+  successfulRecords Int           @default(0) @map("successful_records")
+  failedRecords     Int           @default(0) @map("failed_records")
+  errorSummary      String?       @map("error_summary")
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz()
+
+  items       OrgSyncRunItem[]
+  triggeredBy User?            @relation(fields: [triggeredByUserId], references: [id])
+
+  @@index([startedAt(sort: Desc)])
+  @@map("org_sync_runs")
+}
+
+/// Kết quả xử lý từng nhân sự (member) trong một OrgSyncRun — phục vụ tra soát khi có lỗi/skip.
+model OrgSyncRunItem {
+  id                Int               @id @default(autoincrement())
+  orgSyncRunId      String            @map("org_sync_run_id") @db.Uuid
+  externalRecordKey String            @map("external_record_key") @db.VarChar(200)
+  employeeId        Int?              @map("employee_id")
+  resultStatus      OrgSyncItemStatus @map("result_status")
+  errorMessage      String?           @map("error_message")
+  createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz()
+
+  run      OrgSyncRun @relation(fields: [orgSyncRunId], references: [id], onDelete: Cascade)
+  employee Employee?  @relation(fields: [employeeId], references: [id])
+
+  // Vừa hỗ trợ FK/cascade theo run, vừa tránh sort khi mở chi tiết một lượt sync.
+  @@index([orgSyncRunId, createdAt])
+  @@map("org_sync_run_items")
+}
+
+/// Metadata file đính kèm (M03) — file thực nằm trên object storage (Supabase Storage), bảng này
+/// chỉ lưu metadata + storage_key để tra cứu/tạo signed URL khi cần.
+model FileAttachment {
+  id               String   @id @default(uuid()) @db.Uuid
+  uploadedByUserId String   @map("uploaded_by_user_id") @db.Uuid
+  originalFileName String   @map("original_file_name") @db.VarChar(255)
+  mimeType         String   @map("mime_type") @db.VarChar(120)
+  fileSizeBytes    BigInt   @map("file_size_bytes")
+  /// Đường dẫn (object key) trong bucket Supabase Storage — private, chỉ dùng nội bộ để tạo
+  /// signed URL khi trả về cho client, không lộ trực tiếp ra API response.
+  storageKey       String   @map("storage_key")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  uploadedBy     User                      @relation(fields: [uploadedByUserId], references: [id])
+  trafficRecords TrafficRecordAttachment[]
+
+  @@map("file_attachments")
+}
+
+/// Kỳ tính lương (M04) — Admin mở/chuyển trạng thái. State machine một chiều:
+/// DRAFT -> OPEN -> IN_REVIEW -> CLOSED, không cho chuyển ngược.
+/// `rewardRuleSetId` thêm ở M05 (bảng reward_rule_sets đã tồn tại): tự động gán bằng
+/// RewardRuleSet đang ACTIVE khi mở kỳ (bước "validate reward rule set" hoãn từ M04) — kỳ giữ
+/// nguyên tham chiếu version đó vĩnh viễn kể cả khi sau này có version ACTIVE khác.
+model PayrollPeriod {
+  id               Int                 @id @default(autoincrement())
+  code             String              @unique @db.VarChar(20)
+  name             String              @db.VarChar(100)
+  payrollYear      Int                 @map("payroll_year")
+  payrollMonth     Int                 @map("payroll_month")
+  startDate        DateTime            @map("start_date") @db.Date
+  endDate          DateTime            @map("end_date") @db.Date
+  approvalDeadline DateTime?           @map("approval_deadline") @db.Timestamptz()
+  rewardRuleSetId  Int?                @map("reward_rule_set_id")
+  status           PayrollPeriodStatus @default(DRAFT)
+  openedByUserId   String?             @map("opened_by_user_id") @db.Uuid
+  openedAt         DateTime?           @map("opened_at") @db.Timestamptz()
+  closedAt         DateTime?           @map("closed_at") @db.Timestamptz()
+  createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz()
+
+  openedBy                   User?                               @relation(fields: [openedByUserId], references: [id])
+  rewardRuleSet              RewardRuleSet?                      @relation("PayrollPeriodRewardRuleSet", fields: [rewardRuleSetId], references: [id])
+  employeeSnapshots          PayrollPeriodEmployeeSnapshot[]
+  employeeTeamSnapshots      PayrollPeriodEmployeeTeamSnapshot[]
+  auditLogs                  AuditLog[]
+  employeeRevenueRecords     EmployeeRevenueRecord[]
+  employeeTrafficRecords     EmployeeTrafficRecord[]
+  /// Ngược của RewardRuleSet.effectiveFromPeriodId — thường rỗng/0-1 phần tử, không dùng để
+  /// truy vấn trực tiếp, giữ vì Prisma yêu cầu khai báo 2 chiều cho relation có tên riêng.
+  effectiveForRewardRuleSets RewardRuleSet[]                     @relation("RewardRuleSetEffectiveFromPeriod")
+  kpiPeriodTargets           KpiPeriodTarget[]
+  employeeKpiTargets         EmployeeKpiTarget[]
+  kpiAssignments             EmployeeKpiAssignment[]
+  kpiActuals                 EmployeeKpiActual[]
+  okrs                       EmployeeOkr[]
+  proposals                  KpiOkrProposal[]
+  kpiSyncRuns                KpiSyncRun[]
+  salaryRecords              SalaryRecord[]
+
+  @@unique([payrollYear, payrollMonth])
+  @@index([payrollYear, payrollMonth])
+  @@index([startDate(sort: Desc)])
+  @@map("payroll_periods")
+}
+
+/// Doanh thu chính thức của một nhân sự trong một kỳ lương (M11). Đây là nguồn duy nhất được
+/// Salary Engine dùng để tra mốc hoa hồng; dữ liệu đối chiếu bên ngoài không được lưu vào đây.
+/// Chỉ actor có permission `revenue.write` được upsert, và mọi thay đổi phải có AuditLog.
+model EmployeeRevenueRecord {
+  id                    Int      @id @default(autoincrement())
+  employeeId            Int      @map("employee_id")
+  payrollPeriodId       Int      @map("payroll_period_id")
+  officialRevenueAmount Decimal  @map("official_revenue_amount") @db.Decimal(18, 0)
+  enteredByUserId       String   @map("entered_by_user_id") @db.Uuid
+  enteredAt             DateTime @default(now()) @map("entered_at") @db.Timestamptz()
+  updatedByUserId       String?  @map("updated_by_user_id") @db.Uuid
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  employee      Employee      @relation(fields: [employeeId], references: [id])
+  payrollPeriod PayrollPeriod @relation(fields: [payrollPeriodId], references: [id])
+  enteredBy     User          @relation("RevenueEnteredBy", fields: [enteredByUserId], references: [id])
+  updatedBy     User?         @relation("RevenueUpdatedBy", fields: [updatedByUserId], references: [id])
+
+  @@unique([employeeId, payrollPeriodId])
+  @@index([payrollPeriodId])
+  @@map("employee_revenue_records")
+}
+
+/// Traffic theo từng nền tảng của một nhân sự trong một kỳ lương (M10). Chỉ record đã được nhân
+/// sự xác nhận và Leader duyệt mới được tính là traffic hợp lệ cho RPM.
+model EmployeeTrafficRecord {
+  id                     Int                    @id @default(autoincrement())
+  employeeId             Int                    @map("employee_id")
+  payrollPeriodId        Int                    @map("payroll_period_id")
+  platform               TrafficPlatform
+  views                  BigInt                 @default(0)
+  selfConfirmationStatus SelfConfirmationStatus @default(DRAFT) @map("self_confirmation_status")
+  selfConfirmedByUserId  String?                @map("self_confirmed_by_user_id") @db.Uuid
+  selfConfirmedAt        DateTime?              @map("self_confirmed_at") @db.Timestamptz()
+  leaderReviewStatus     LeaderReviewStatus     @default(PENDING) @map("leader_review_status")
+  leaderReviewedByUserId String?                @map("leader_reviewed_by_user_id") @db.Uuid
+  leaderReviewedAt       DateTime?              @map("leader_reviewed_at") @db.Timestamptz()
+  leaderRejectionReason  String?                @map("leader_rejection_reason")
+  createdAt              DateTime               @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt              DateTime               @updatedAt @map("updated_at") @db.Timestamptz()
+
+  employee         Employee                  @relation(fields: [employeeId], references: [id])
+  payrollPeriod    PayrollPeriod             @relation(fields: [payrollPeriodId], references: [id])
+  selfConfirmedBy  User?                     @relation("TrafficSelfConfirmedBy", fields: [selfConfirmedByUserId], references: [id])
+  leaderReviewedBy User?                     @relation("TrafficLeaderReviewedBy", fields: [leaderReviewedByUserId], references: [id])
+  attachments      TrafficRecordAttachment[]
+
+  @@unique([employeeId, payrollPeriodId, platform])
+  @@index([payrollPeriodId])
+  @@map("employee_traffic_records")
+}
+
+/// Bảng nối minh chứng đã upload với một dòng traffic. File có thể được dùng lại khi người dùng
+/// muốn cung cấp cùng một dashboard/export cho nhiều nền tảng.
+model TrafficRecordAttachment {
+  employeeTrafficRecordId Int    @map("employee_traffic_record_id")
+  fileAttachmentId        String @map("file_attachment_id") @db.Uuid
+
+  employeeTrafficRecord EmployeeTrafficRecord @relation(fields: [employeeTrafficRecordId], references: [id], onDelete: Cascade)
+  // Không cascade từ file: minh chứng đã gắn phải được gỡ tường minh khỏi entity nháp trước,
+  // tránh mất bằng chứng của dữ liệu đã xác nhận/duyệt.
+  fileAttachment        FileAttachment        @relation(fields: [fileAttachmentId], references: [id], onDelete: Restrict)
+
+  @@id([employeeTrafficRecordId, fileAttachmentId])
+  @@index([fileAttachmentId])
+  @@map("traffic_record_attachments")
+}
+
+/// Snapshot thông tin nhân sự tại thời điểm mở kỳ — cố định vĩnh viễn, không tự cập nhật khi
+/// nhân sự đổi team/leader/manager sau đó (đúng business rule "snapshot không tự thay đổi").
+model PayrollPeriodEmployeeSnapshot {
+  id                        Int      @id @default(autoincrement())
+  payrollPeriodId           Int      @map("payroll_period_id")
+  employeeId                Int      @map("employee_id")
+  employeeCodeSnapshot      String   @map("employee_code_snapshot") @db.VarChar(50)
+  employeeNameSnapshot      String   @map("employee_name_snapshot") @db.VarChar(200)
+  jobTitleSnapshot          String   @map("job_title_snapshot") @db.VarChar(100)
+  /// Mã nhóm nghiệp vụ tại thời điểm chốt kỳ (lưu code, không lưu FK) — đổi tên/xóa nhóm trong
+  /// danh mục không được làm sai lệch dữ liệu kỳ đã chốt.
+  employeeGroupsSnapshot    String[] @default([]) @map("employee_groups_snapshot")
+  teamIdSnapshot            Int?     @map("team_id_snapshot")
+  teamCodeSnapshot          String?  @map("team_code_snapshot") @db.VarChar(50)
+  teamNameSnapshot          String?  @map("team_name_snapshot") @db.VarChar(150)
+  leaderEmployeeIdSnapshot  Int?     @map("leader_employee_id_snapshot")
+  leaderNameSnapshot        String?  @map("leader_name_snapshot") @db.VarChar(200)
+  managerEmployeeIdSnapshot Int?     @map("manager_employee_id_snapshot")
+  managerNameSnapshot       String?  @map("manager_name_snapshot") @db.VarChar(200)
+  employmentStatusSnapshot  String   @map("employment_status_snapshot") @db.VarChar(20)
+  createdAt                 DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  payrollPeriod PayrollPeriod                       @relation(fields: [payrollPeriodId], references: [id])
+  employee      Employee                            @relation(fields: [employeeId], references: [id])
+  teamSnapshots PayrollPeriodEmployeeTeamSnapshot[]
+
+  @@unique([payrollPeriodId, employeeId])
+  @@index([payrollPeriodId, teamIdSnapshot])
+  @@index([payrollPeriodId, employeeNameSnapshot], map: "payroll_period_snapshots_period_employee_name_idx")
+  @@map("payroll_period_employee_snapshots")
+}
+
+/// Snapshot bất biến của từng membership tại lúc mở kỳ. salaryWeightPercent là tỷ trọng KPI của
+/// team trong kỳ và không đổi theo cấu trúc tổ chức live sau đó.
+model PayrollPeriodEmployeeTeamSnapshot {
+  id                        Int      @id @default(autoincrement())
+  payrollPeriodId           Int      @map("payroll_period_id")
+  employeeSnapshotId        Int      @map("employee_snapshot_id")
+  employeeId                Int      @map("employee_id")
+  membershipId              Int?     @map("membership_id")
+  teamId                    Int      @map("team_id")
+  teamCodeSnapshot          String   @map("team_code_snapshot") @db.VarChar(50)
+  teamNameSnapshot          String   @map("team_name_snapshot") @db.VarChar(150)
+  isPrimary                 Boolean  @default(false) @map("is_primary")
+  salaryWeightPercent       Decimal  @default(100) @map("salary_weight_percent") @db.Decimal(5, 2)
+  leaderEmployeeIdSnapshot  Int?     @map("leader_employee_id_snapshot")
+  leaderNameSnapshot        String?  @map("leader_name_snapshot") @db.VarChar(200)
+  managerEmployeeIdSnapshot Int?     @map("manager_employee_id_snapshot")
+  managerNameSnapshot       String?  @map("manager_name_snapshot") @db.VarChar(200)
+  createdAt                 DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  payrollPeriod    PayrollPeriod                 @relation(fields: [payrollPeriodId], references: [id], onDelete: Cascade)
+  employeeSnapshot PayrollPeriodEmployeeSnapshot @relation(fields: [employeeSnapshotId], references: [id], onDelete: Cascade)
+  employee         Employee                      @relation("PeriodTeamSnapshotEmployee", fields: [employeeId], references: [id])
+  membership       EmployeeTeamMembership?       @relation(fields: [membershipId], references: [id], onDelete: SetNull)
+  team             Team                          @relation(fields: [teamId], references: [id])
+  leader           Employee?                     @relation("PeriodTeamSnapshotLeader", fields: [leaderEmployeeIdSnapshot], references: [id], onDelete: SetNull)
+  manager          Employee?                     @relation("PeriodTeamSnapshotManager", fields: [managerEmployeeIdSnapshot], references: [id], onDelete: SetNull)
+
+  @@unique([payrollPeriodId, employeeId, teamId])
+  @@index([payrollPeriodId, teamId])
+  @@index([employeeSnapshotId])
+  @@map("payroll_period_employee_team_snapshots")
+}
+
+/// Bộ cấu hình mốc thưởng (M05) — mỗi version là một bản snapshot cấu hình tại 1 thời điểm.
+/// ACTIVE version không sửa trực tiếp (immutable); muốn đổi rule phải clone sang DRAFT mới rồi
+/// activate — activate sẽ tự động ARCHIVED version ACTIVE hiện tại (tại một thời điểm chỉ có
+/// đúng 1 version ACTIVE). `effectiveFromPeriodId` chỉ mang tính ghi chú "áp dụng từ kỳ nào",
+/// KHÔNG phải cơ chế gán rule set cho kỳ — việc đó do PayrollPeriod.rewardRuleSetId tự động
+/// nhận bản ACTIVE tại thời điểm mở kỳ đảm nhiệm.
+model RewardRuleSet {
+  id                          Int                 @id @default(autoincrement())
+  version                     Int                 @unique
+  achievementThresholdPercent Decimal             @map("achievement_threshold_percent") @db.Decimal(5, 2)
+  effectiveFromPeriodId       Int?                @map("effective_from_period_id")
+  status                      RewardRuleSetStatus @default(DRAFT)
+  createdByUserId             String              @map("created_by_user_id") @db.Uuid
+  createdAt                   DateTime            @default(now()) @map("created_at") @db.Timestamptz()
+
+  effectiveFromPeriod PayrollPeriod?         @relation("RewardRuleSetEffectiveFromPeriod", fields: [effectiveFromPeriodId], references: [id])
+  createdBy           User                   @relation(fields: [createdByUserId], references: [id])
+  revenueBrackets     RevenueRewardBracket[]
+  /// Các kỳ lương đã tự động gán version này lúc mở kỳ (xem PayrollPeriod.rewardRuleSetId).
+  payrollPeriods      PayrollPeriod[]        @relation("PayrollPeriodRewardRuleSet")
+  salaryRecords       SalaryRecord[]
+
+  // Migration có partial unique index bảo đảm tối đa một bản ACTIVE tại mọi thời điểm.
+  @@map("reward_rule_sets")
+}
+
+/// Mốc thưởng theo doanh thu trong một RewardRuleSet — match theo nửa khoảng
+/// [minRevenueAmount, maxRevenueAmount); bracket cao nhất có maxRevenueAmount = null.
+/// Chỉ được thêm/sửa/xóa khi rule set còn DRAFT (ACTIVE/ARCHIVED bất biến).
+model RevenueRewardBracket {
+  id                    Int      @id @default(autoincrement())
+  rewardRuleSetId       Int      @map("reward_rule_set_id")
+  label                 String   @db.VarChar(120)
+  minRevenueAmount      Decimal  @map("min_revenue_amount") @db.Decimal(18, 0)
+  maxRevenueAmount      Decimal? @map("max_revenue_amount") @db.Decimal(18, 0)
+  commissionRatePercent Decimal  @map("commission_rate_percent") @db.Decimal(7, 4)
+  rpmRatePer1000Views   Decimal  @map("rpm_rate_per_1000_views") @db.Decimal(18, 4)
+  sortOrder             Int      @map("sort_order")
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  rewardRuleSet RewardRuleSet  @relation(fields: [rewardRuleSetId], references: [id], onDelete: Cascade)
+  salaryRecords SalaryRecord[]
+
+  @@unique([rewardRuleSetId, sortOrder])
+  @@map("revenue_reward_brackets")
+}
+
+/// Lịch sử lương cơ bản theo nhân sự (M05) — nửa khoảng [effectiveFrom, effectiveTo); bản ghi
+/// đang "hiện hành" có effectiveTo = null. Tạo bản ghi mới sẽ tự đóng effectiveTo của bản ghi
+/// hiện hành trước đó (xem BaseSalaryService.create). V1 chưa có attendance nên không prorate
+/// theo ngày công — dùng nguyên mức tháng có hiệu lực tại thời điểm tính lương.
+model BaseSalaryHistory {
+  id                Int       @id @default(autoincrement())
+  employeeId        Int       @map("employee_id")
+  monthlyBaseSalary Decimal   @map("monthly_base_salary") @db.Decimal(18, 0)
+  effectiveFrom     DateTime  @map("effective_from") @db.Date
+  effectiveTo       DateTime? @map("effective_to") @db.Date
+  createdByUserId   String    @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  employee  Employee @relation(fields: [employeeId], references: [id])
+  createdBy User     @relation(fields: [createdByUserId], references: [id])
+
+  @@index([employeeId, effectiveFrom(sort: Desc)])
+  @@map("base_salary_histories")
+}
+
+/// Mức tiền thưởng của một nhóm KPI dành riêng cho một nhân sự, theo lịch sử hiệu lực dạng
+/// nửa khoảng [effectiveFrom, effectiveTo). Khi tạo mức mới, service tự đóng mức hiện hành cũ.
+/// M12 sẽ resolve đúng bản ghi có hiệu lực rồi snapshot rewardAmount vào salary record.
+model EmployeeKpiRewardRate {
+  id              Int       @id @default(autoincrement())
+  employeeId      Int       @map("employee_id")
+  kpiGroupId      Int       @map("kpi_group_id")
+  rewardAmount    Decimal   @map("reward_amount") @db.Decimal(18, 0)
+  effectiveFrom   DateTime  @map("effective_from") @db.Date
+  effectiveTo     DateTime? @map("effective_to") @db.Date
+  createdByUserId String    @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz()
+
+  employee  Employee @relation(fields: [employeeId], references: [id])
+  kpiGroup  KpiGroup @relation(fields: [kpiGroupId], references: [id])
+  createdBy User     @relation(fields: [createdByUserId], references: [id])
+
+  @@unique([employeeId, kpiGroupId, effectiveFrom])
+  @@index([employeeId, effectiveFrom(sort: Desc)])
+  @@index([kpiGroupId])
+  @@map("employee_kpi_reward_rates")
+}
+
+/// Nhóm KPI (M06) — có thể áp dụng cho nhiều Team. `teams` rỗng chỉ dành cho nhóm dữ liệu cũ,
+/// được hiểu là dùng chung toàn hệ thống để không làm mất hiệu lực các assignment lịch sử.
+/// Nhóm mới phải chọn ít nhất một team ở API/UI. `isActive=false` là soft-disable, không xóa.
+model KpiGroup {
+  id              Int           @id @default(autoincrement())
+  code            String        @unique @db.VarChar(80)
+  name            String        @db.VarChar(200)
+  description     String?
+  dataSource      KpiDataSource @default(INTERNAL) @map("data_source")
+  isActive        Boolean       @default(true) @map("is_active")
+  createdByUserId String        @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt       DateTime      @updatedAt @map("updated_at") @db.Timestamptz()
+
+  createdBy                User            @relation(fields: [createdByUserId], references: [id])
+  teams                    Team[]          @relation("KpiGroupTeams")
+  /// Rỗng = chỉ gán thủ công. Có giá trị = tự gán khi mở kỳ cho nhân sự có ít nhất một nhóm khớp.
+  applicableEmployeeGroups EmployeeGroup[] @relation("KpiGroupEmployeeGroups")
+
+  items       KpiItem[]
+  assignments EmployeeKpiAssignment[]
+  rewardRates EmployeeKpiRewardRate[]
+  salaryItems SalaryRecordKpiItem[]
+  proposals   KpiOkrProposal[]
+
+  @@map("kpi_groups")
+}
+
+/// Đầu mục trong một KpiGroup — target nằm riêng ở KpiPeriodTarget (không lưu trên item), vì
+/// target thay đổi theo từng kỳ còn item là định nghĩa cố định. `code` được hệ thống tự sinh và
+/// bất biến sau khi tạo.
+model KpiItem {
+  id         Int      @id @default(autoincrement())
+  kpiGroupId Int      @map("kpi_group_id")
+  code       String   @db.VarChar(80)
+  name       String   @db.VarChar(200)
+  unit       String   @db.VarChar(50)
+  sortOrder  Int      @default(0) @map("sort_order")
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  kpiGroup        KpiGroup            @relation(fields: [kpiGroupId], references: [id])
+  periodTargets   KpiPeriodTarget[]
+  employeeTargets EmployeeKpiTarget[]
+  employeeActuals EmployeeKpiActual[]
+  syncItems       KpiSyncRunItem[]
+
+  @@unique([kpiGroupId, code])
+  @@map("kpi_items")
+}
+
+/// Target của 1 KpiItem trong 1 kỳ lương cụ thể — mỗi kỳ độc lập (đổi target kỳ này không ảnh
+/// hưởng kỳ khác, đúng UNIQUE(kpi_item_id, payroll_period_id)). Set qua PUT (upsert) — idempotent
+/// theo đúng nguyên tắc kiến trúc bắt buộc (mục 5.7).
+model KpiPeriodTarget {
+  id              Int      @id @default(autoincrement())
+  kpiItemId       Int      @map("kpi_item_id")
+  payrollPeriodId Int      @map("payroll_period_id")
+  targetValue     Decimal  @map("target_value") @db.Decimal(18, 4)
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  kpiItem       KpiItem       @relation(fields: [kpiItemId], references: [id])
+  payrollPeriod PayrollPeriod @relation(fields: [payrollPeriodId], references: [id])
+  createdBy     User          @relation(fields: [createdByUserId], references: [id])
+
+  @@unique([kpiItemId, payrollPeriodId])
+  @@index([payrollPeriodId])
+  @@map("kpi_period_targets")
+}
+
+/// Target riêng của một nhân sự cho một đầu mục KPI trong một kỳ. Khi tồn tại, target này
+/// được ưu tiên hơn KpiPeriodTarget (target mặc định cả kỳ) lúc tính tiến độ; không ghi đè
+/// cấu hình chung để leader có thể điều chỉnh riêng cho từng thành viên trong phạm vi team.
+model EmployeeKpiTarget {
+  id                 Int                @id @default(autoincrement())
+  employeeId         Int                @map("employee_id")
+  kpiItemId          Int                @map("kpi_item_id")
+  payrollPeriodId    Int                @map("payroll_period_id")
+  teamId             Int                @map("team_id")
+  targetValue        Decimal            @map("target_value") @db.Decimal(18, 4)
+  overrideValue      Decimal?           @map("override_value") @db.Decimal(18, 4)
+  overrideReason     String?            @map("override_reason")
+  overriddenByUserId String?            @map("overridden_by_user_id") @db.Uuid
+  overriddenAt       DateTime?          @map("overridden_at") @db.Timestamptz()
+  dataSource         KpiValueDataSource @default(MANUAL) @map("data_source")
+  syncedAt           DateTime?          @map("synced_at") @db.Timestamptz()
+  createdByUserId    String             @map("created_by_user_id") @db.Uuid
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz()
+
+  employee      Employee         @relation(fields: [employeeId], references: [id])
+  kpiItem       KpiItem          @relation(fields: [kpiItemId], references: [id])
+  payrollPeriod PayrollPeriod    @relation(fields: [payrollPeriodId], references: [id])
+  team          Team             @relation(fields: [teamId], references: [id])
+  createdBy     User             @relation(fields: [createdByUserId], references: [id])
+  overriddenBy  User?            @relation("KpiTargetOverriddenBy", fields: [overriddenByUserId], references: [id])
+  syncItems     KpiSyncRunItem[]
+
+  @@unique([employeeId, teamId, kpiItemId, payrollPeriodId])
+  @@index([employeeId, payrollPeriodId, teamId])
+  @@index([payrollPeriodId, kpiItemId])
+  @@map("employee_kpi_targets")
+}
+
+/// Gán 1 KpiGroup cho 1 nhân sự trong 1 kỳ lương (M07) — điều kiện bắt buộc để nhân sự được nhập
+/// actual cho các item thuộc group đó trong kỳ. Khi tạo, service tự tạo kèm các EmployeeKpiActual
+/// (mặc định 0/DRAFT/PENDING) cho mọi KpiItem đang active của group — xem KpiAssignmentsService.
+model EmployeeKpiAssignment {
+  id               Int                 @id @default(autoincrement())
+  employeeId       Int                 @map("employee_id")
+  kpiGroupId       Int                 @map("kpi_group_id")
+  payrollPeriodId  Int                 @map("payroll_period_id")
+  teamId           Int                 @map("team_id")
+  assignmentStatus KpiAssignmentStatus @default(ASSIGNED) @map("assignment_status")
+  assignedByUserId String              @map("assigned_by_user_id") @db.Uuid
+  assignedAt       DateTime            @default(now()) @map("assigned_at") @db.Timestamptz()
+
+  employee      Employee      @relation(fields: [employeeId], references: [id])
+  kpiGroup      KpiGroup      @relation(fields: [kpiGroupId], references: [id])
+  payrollPeriod PayrollPeriod @relation(fields: [payrollPeriodId], references: [id])
+  team          Team          @relation(fields: [teamId], references: [id])
+  assignedBy    User          @relation("KpiAssignmentAssignedBy", fields: [assignedByUserId], references: [id])
+
+  @@unique([employeeId, teamId, kpiGroupId, payrollPeriodId])
+  @@index([payrollPeriodId, employeeId, teamId])
+  @@index([kpiGroupId])
+  @@map("employee_kpi_assignments")
+}
+
+/// Actual của 1 KpiItem cho 1 nhân sự trong 1 kỳ (M07) — effective_actual dùng bởi engine tính
+/// lương (M12) = override_value ?? actual_value. Chỉ sửa được actual_value/self_assessment khi
+/// self_confirmation_status = DRAFT ("Draft => confirmed", "Rejected => editable", "Approved data
+/// protected" — 3 case còn lại của state machine không cho PUT trực tiếp).
+model EmployeeKpiActual {
+  id                     Int                    @id @default(autoincrement())
+  employeeId             Int                    @map("employee_id")
+  kpiItemId              Int                    @map("kpi_item_id")
+  payrollPeriodId        Int                    @map("payroll_period_id")
+  teamId                 Int                    @map("team_id")
+  actualValue            Decimal                @default(0) @map("actual_value") @db.Decimal(18, 4)
+  dataSource             KpiValueDataSource     @default(MANUAL) @map("data_source")
+  syncedAt               DateTime?              @map("synced_at") @db.Timestamptz()
+  requiresManualEntry    Boolean                @default(false) @map("requires_manual_entry")
+  manualEnteredAt        DateTime?              @map("manual_entered_at") @db.Timestamptz()
+  syncMessage            String?                @map("sync_message")
+  selfAssessment         String?                @map("self_assessment")
+  selfConfirmationStatus SelfConfirmationStatus @default(DRAFT) @map("self_confirmation_status")
+  selfConfirmedByUserId  String?                @map("self_confirmed_by_user_id") @db.Uuid
+  selfConfirmedAt        DateTime?              @map("self_confirmed_at") @db.Timestamptz()
+  leaderReviewStatus     LeaderReviewStatus     @default(PENDING) @map("leader_review_status")
+  leaderReviewedByUserId String?                @map("leader_reviewed_by_user_id") @db.Uuid
+  leaderReviewedAt       DateTime?              @map("leader_reviewed_at") @db.Timestamptz()
+  leaderRejectionReason  String?                @map("leader_rejection_reason")
+  overrideValue          Decimal?               @map("override_value") @db.Decimal(18, 4)
+  overrideReason         String?                @map("override_reason")
+  overriddenByUserId     String?                @map("overridden_by_user_id") @db.Uuid
+  overriddenAt           DateTime?              @map("overridden_at") @db.Timestamptz()
+  createdAt              DateTime               @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt              DateTime               @updatedAt @map("updated_at") @db.Timestamptz()
+
+  employee         Employee         @relation(fields: [employeeId], references: [id])
+  kpiItem          KpiItem          @relation(fields: [kpiItemId], references: [id])
+  payrollPeriod    PayrollPeriod    @relation(fields: [payrollPeriodId], references: [id])
+  team             Team             @relation(fields: [teamId], references: [id])
+  selfConfirmedBy  User?            @relation("KpiActualSelfConfirmedBy", fields: [selfConfirmedByUserId], references: [id])
+  leaderReviewedBy User?            @relation("KpiActualLeaderReviewedBy", fields: [leaderReviewedByUserId], references: [id])
+  overriddenBy     User?            @relation("KpiActualOverriddenBy", fields: [overriddenByUserId], references: [id])
+  syncItems        KpiSyncRunItem[]
+
+  @@unique([employeeId, teamId, kpiItemId, payrollPeriodId])
+  @@index([employeeId, payrollPeriodId, teamId])
+  @@index([kpiItemId])
+  @@map("employee_kpi_actuals")
+}
+
+/// Một lượt kéo snapshot KPI từ AutomationGenVideo cho một team/kỳ lương.
+model KpiSyncRun {
+  id                String        @id @default(uuid()) @db.Uuid
+  externalTeamId    String        @map("external_team_id") @db.Uuid
+  payrollPeriodId   Int           @map("payroll_period_id")
+  month             String        @db.VarChar(7)
+  triggeredByUserId String        @map("triggered_by_user_id") @db.Uuid
+  status            KpiSyncStatus @default(RUNNING)
+  startedAt         DateTime      @default(now()) @map("started_at") @db.Timestamptz()
+  finishedAt        DateTime?     @map("finished_at") @db.Timestamptz()
+  receivedRecords   Int           @default(0) @map("received_records")
+  successfulRecords Int           @default(0) @map("successful_records")
+  skippedRecords    Int           @default(0) @map("skipped_records")
+  conflictRecords   Int           @default(0) @map("conflict_records")
+  failedRecords     Int           @default(0) @map("failed_records")
+  manualEntryCount  Int           @default(0) @map("manual_entry_count")
+  warningCount      Int           @default(0) @map("warning_count")
+  sourceWarnings    Json?         @map("source_warnings")
+  errorSummary      String?       @map("error_summary")
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz()
+
+  payrollPeriod PayrollPeriod    @relation(fields: [payrollPeriodId], references: [id])
+  triggeredBy   User             @relation(fields: [triggeredByUserId], references: [id])
+  items         KpiSyncRunItem[]
+
+  @@index([startedAt(sort: Desc)])
+  // Migration có thêm partial unique index để không thể có hai run RUNNING cùng team/tháng.
+  @@index([externalTeamId, month, status])
+  @@index([payrollPeriodId])
+  @@map("kpi_sync_runs")
+}
+
+/// Kết quả áp dụng từng target/actual trong một lượt đồng bộ.
+model KpiSyncRunItem {
+  id                   Int               @id @default(autoincrement())
+  kpiSyncRunId         String            @map("kpi_sync_run_id") @db.Uuid
+  externalRecordKey    String            @map("external_record_key") @db.VarChar(300)
+  externalUserId       String?           @map("external_user_id") @db.Uuid
+  externalEmployeeCode String?           @map("external_employee_code") @db.VarChar(50)
+  employeeId           Int?              @map("employee_id")
+  teamId               Int?              @map("team_id")
+  kpiItemId            Int?              @map("kpi_item_id")
+  employeeKpiTargetId  Int?              @map("employee_kpi_target_id")
+  employeeKpiActualId  Int?              @map("employee_kpi_actual_id")
+  groupCode            String            @map("group_code") @db.VarChar(80)
+  metricCode           String            @map("metric_code") @db.VarChar(80)
+  recordKind           KpiSyncRecordKind @map("record_kind")
+  resultStatus         KpiSyncItemStatus @map("result_status")
+  previousValue        Decimal?          @map("previous_value") @db.Decimal(18, 4)
+  incomingValue        Decimal?          @map("incoming_value") @db.Decimal(18, 4)
+  appliedValue         Decimal?          @map("applied_value") @db.Decimal(18, 4)
+  hasConflict          Boolean           @default(false) @map("has_conflict")
+  manualEntryRequired  Boolean           @default(false) @map("manual_entry_required")
+  message              String?
+  createdAt            DateTime          @default(now()) @map("created_at") @db.Timestamptz()
+
+  run               KpiSyncRun         @relation(fields: [kpiSyncRunId], references: [id], onDelete: Cascade)
+  employee          Employee?          @relation(fields: [employeeId], references: [id])
+  team              Team?              @relation(fields: [teamId], references: [id])
+  kpiItem           KpiItem?           @relation(fields: [kpiItemId], references: [id])
+  employeeKpiTarget EmployeeKpiTarget? @relation(fields: [employeeKpiTargetId], references: [id])
+  employeeKpiActual EmployeeKpiActual? @relation(fields: [employeeKpiActualId], references: [id])
+
+  // Một index phục vụ cả FK/cascade, groupBy trạng thái và thứ tự hiển thị chi tiết run.
+  @@index([kpiSyncRunId, resultStatus, id])
+  // Salary engine tra xung đột chưa xử lý theo từng nhân sự trong kỳ.
+  @@index([employeeId, resultStatus, id(sort: Desc)], map: "kpi_sync_run_items_employee_status_id_idx")
+  // Cần cho ON DELETE SET NULL khi xóa KPI item chưa phát sinh dữ liệu nghiệp vụ.
+  @@index([kpiItemId])
+  @@index([teamId, employeeId])
+  @@map("kpi_sync_run_items")
+}
+
+/// OKR của 1 nhân sự trong 1 kỳ (M08) — Leader/Admin tạo (target/reward_amount, quyền `okr.create`),
+/// nhân sự chỉ tự cập nhật actual_value/self_assessment (quyền `okr.update_self`, chỉ khi DRAFT).
+/// Không có bảng "assignment" riêng như M07 — OKR tạo thẳng, không cần bước gán trước.
+/// `weight_percent` KHÔNG tồn tại (đúng spec V1). progress = MIN(actual/target, 100%) tính động ở
+/// API, không lưu cột riêng — reward_amount là số tiền cố định khi đạt threshold, việc so sánh với
+/// threshold (`reward_rule_sets.achievement_threshold_percent`) và cộng vào lương thuộc M12.
+model EmployeeOkr {
+  id                     Int                    @id @default(autoincrement())
+  employeeId             Int                    @map("employee_id")
+  payrollPeriodId        Int                    @map("payroll_period_id")
+  title                  String                 @db.VarChar(250)
+  description            String?
+  unit                   String?                @db.VarChar(50)
+  targetValue            Decimal                @map("target_value") @db.Decimal(18, 4)
+  actualValue            Decimal                @default(0) @map("actual_value") @db.Decimal(18, 4)
+  overrideValue          Decimal?               @map("override_value") @db.Decimal(18, 4)
+  overrideReason         String?                @map("override_reason")
+  rewardAmount           Decimal                @map("reward_amount") @db.Decimal(18, 0)
+  deadline               DateTime?              @db.Date
+  selfAssessment         String?                @map("self_assessment")
+  selfConfirmationStatus SelfConfirmationStatus @default(DRAFT) @map("self_confirmation_status")
+  selfConfirmedByUserId  String?                @map("self_confirmed_by_user_id") @db.Uuid
+  selfConfirmedAt        DateTime?              @map("self_confirmed_at") @db.Timestamptz()
+  leaderReviewStatus     LeaderReviewStatus     @default(PENDING) @map("leader_review_status")
+  leaderReviewedByUserId String?                @map("leader_reviewed_by_user_id") @db.Uuid
+  leaderReviewedAt       DateTime?              @map("leader_reviewed_at") @db.Timestamptz()
+  leaderRejectionReason  String?                @map("leader_rejection_reason")
+  createdAt              DateTime               @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt              DateTime               @updatedAt @map("updated_at") @db.Timestamptz()
+
+  employee         Employee              @relation(fields: [employeeId], references: [id])
+  payrollPeriod    PayrollPeriod         @relation(fields: [payrollPeriodId], references: [id])
+  selfConfirmedBy  User?                 @relation("OkrSelfConfirmedBy", fields: [selfConfirmedByUserId], references: [id])
+  leaderReviewedBy User?                 @relation("OkrLeaderReviewedBy", fields: [leaderReviewedByUserId], references: [id])
+  salaryItems      SalaryRecordOkrItem[]
+
+  @@index([employeeId, payrollPeriodId, createdAt])
+  @@map("employee_okrs")
+}
+
+/// Đề xuất KPI item mới hoặc OKR mới do Editor/Content Creator gửi (quyền `okr.propose` — dùng
+/// chung cho cả 2 loại, đúng tên permission trong catalog "Đề xuất KPI/OKR mới"), Leader/Admin
+/// duyệt (`kpi.leader_approve` HOẶC `okr.leader_approve` — không có permission riêng cho việc
+/// duyệt proposal trong catalog, dùng OR 2 quyền theo đúng loại đề xuất tương ứng).
+///
+/// Khi approve OKR: tự tạo `EmployeeOkr` (result_entity_type='EmployeeOkr'), đầy đủ field vì
+/// proposal có sẵn proposed_target_value + proposed_reward_amount (bắt buộc validate khi tạo
+/// proposal loại OKR, vì employee_okrs.reward_amount NOT NULL).
+///
+/// Khi approve KPI_ITEM: hiện chỉ chuyển status APPROVED, chưa tự tạo KpiItem; Admin/Leader tạo
+/// đầu mục ở tab Cấu hình KPI sau khi duyệt. Mã đầu mục ở bước đó được hệ thống tự sinh.
+model KpiOkrProposal {
+  id                   Int            @id @default(autoincrement())
+  payrollPeriodId      Int            @map("payroll_period_id")
+  proposerEmployeeId   Int            @map("proposer_employee_id")
+  proposalType         ProposalType   @map("proposal_type")
+  proposedKpiGroupId   Int?           @map("proposed_kpi_group_id")
+  proposedName         String         @map("proposed_name") @db.VarChar(250)
+  proposedUnit         String?        @map("proposed_unit") @db.VarChar(50)
+  proposedTargetValue  Decimal        @map("proposed_target_value") @db.Decimal(18, 4)
+  proposedRewardAmount Decimal?       @map("proposed_reward_amount") @db.Decimal(18, 0)
+  proposedDeadline     DateTime?      @map("proposed_deadline") @db.Date
+  reason               String
+  status               ProposalStatus @default(PENDING)
+  reviewedByUserId     String?        @map("reviewed_by_user_id") @db.Uuid
+  reviewedAt           DateTime?      @map("reviewed_at") @db.Timestamptz()
+  rejectionReason      String?        @map("rejection_reason")
+  /// "EmployeeOkr" khi approve OKR tự tạo được entity; null cho KPI_ITEM (chưa tự tạo, xem ghi chú
+  /// model) hoặc khi chưa được duyệt.
+  resultEntityType     String?        @map("result_entity_type") @db.VarChar(30)
+  resultEntityId       Int?           @map("result_entity_id")
+  createdAt            DateTime       @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt            DateTime       @updatedAt @map("updated_at") @db.Timestamptz()
+
+  payrollPeriod    PayrollPeriod @relation(fields: [payrollPeriodId], references: [id])
+  proposerEmployee Employee      @relation(fields: [proposerEmployeeId], references: [id])
+  proposedKpiGroup KpiGroup?     @relation(fields: [proposedKpiGroupId], references: [id])
+  reviewedBy       User?         @relation("ProposalReviewedBy", fields: [reviewedByUserId], references: [id])
+
+  @@index([createdAt(sort: Desc)])
+  @@map("kpi_okr_proposals")
+}
+
+/// Bản snapshot kết quả tính lương của một nhân sự trong một kỳ. M12 chỉ cập nhật version hiện
+/// hành khi còn PENDING/WARNING; LOCKED bất biến và việc tạo revision thuộc M14.
+model SalaryRecord {
+  id                            Int                @id @default(autoincrement())
+  employeeId                    Int                @map("employee_id")
+  payrollPeriodId               Int                @map("payroll_period_id")
+  versionNumber                 Int                @default(1) @map("version_number")
+  parentSalaryRecordId          Int?               @map("parent_salary_record_id")
+  rewardRuleSetId               Int                @map("reward_rule_set_id")
+  revenueRewardBracketId        Int?               @map("revenue_reward_bracket_id")
+  baseSalaryAmount              Decimal            @map("base_salary_amount") @db.Decimal(18, 0)
+  kpiRewardAmount               Decimal            @default(0) @map("kpi_reward_amount") @db.Decimal(18, 0)
+  okrRewardAmount               Decimal            @default(0) @map("okr_reward_amount") @db.Decimal(18, 0)
+  revenueAmountSnapshot         Decimal            @default(0) @map("revenue_amount_snapshot") @db.Decimal(18, 0)
+  commissionRatePercentSnapshot Decimal            @default(0) @map("commission_rate_percent_snapshot") @db.Decimal(7, 4)
+  commissionAmount              Decimal            @default(0) @map("commission_amount") @db.Decimal(18, 0)
+  totalViewsSnapshot            BigInt             @default(0) @map("total_views_snapshot")
+  rpmRatePer1000ViewsSnapshot   Decimal            @default(0) @map("rpm_rate_per_1000_views_snapshot") @db.Decimal(18, 4)
+  rpmRewardAmount               Decimal            @default(0) @map("rpm_reward_amount") @db.Decimal(18, 0)
+  additionalComponentAmount     Decimal            @default(0) @map("additional_component_amount") @db.Decimal(18, 0)
+  totalSalaryAmount             Decimal            @map("total_salary_amount") @db.Decimal(18, 0)
+  status                        SalaryRecordStatus @default(PENDING)
+  calculationWarnings           Json               @default("[]") @map("calculation_warnings")
+  calculatedByUserId            String             @map("calculated_by_user_id") @db.Uuid
+  calculatedAt                  DateTime           @default(now()) @map("calculated_at") @db.Timestamptz()
+  approvedByUserId              String?            @map("approved_by_user_id") @db.Uuid
+  approvedAt                    DateTime?          @map("approved_at") @db.Timestamptz()
+  lockedAt                      DateTime?          @map("locked_at") @db.Timestamptz()
+  createdAt                     DateTime           @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt                     DateTime           @updatedAt @map("updated_at") @db.Timestamptz()
+
+  employee             Employee                @relation(fields: [employeeId], references: [id])
+  payrollPeriod        PayrollPeriod           @relation(fields: [payrollPeriodId], references: [id])
+  parent               SalaryRecord?           @relation("SalaryRecordVersions", fields: [parentSalaryRecordId], references: [id])
+  revisions            SalaryRecord[]          @relation("SalaryRecordVersions")
+  rewardRuleSet        RewardRuleSet           @relation(fields: [rewardRuleSetId], references: [id])
+  revenueRewardBracket RevenueRewardBracket?   @relation(fields: [revenueRewardBracketId], references: [id])
+  calculatedBy         User                    @relation("SalaryCalculatedBy", fields: [calculatedByUserId], references: [id])
+  approvedBy           User?                   @relation("SalaryApprovedBy", fields: [approvedByUserId], references: [id])
+  kpiItems             SalaryRecordKpiItem[]
+  okrItems             SalaryRecordOkrItem[]
+  components           SalaryRecordComponent[]
+
+  @@unique([employeeId, payrollPeriodId, versionNumber])
+  @@index([payrollPeriodId, status])
+  @@index([parentSalaryRecordId])
+  @@map("salary_records")
+}
+
+/// Snapshot kết quả của từng nhóm KPI độc lập tại thời điểm tính lương.
+model SalaryRecordKpiItem {
+  id                                  Int      @id @default(autoincrement())
+  salaryRecordId                      Int      @map("salary_record_id")
+  kpiGroupId                          Int      @map("kpi_group_id")
+  teamId                              Int      @map("team_id")
+  teamNameSnapshot                    String   @map("team_name_snapshot") @db.VarChar(150)
+  salaryWeightPercentSnapshot         Decimal  @default(100) @map("salary_weight_percent_snapshot") @db.Decimal(5, 2)
+  kpiGroupNameSnapshot                String   @map("kpi_group_name_snapshot") @db.VarChar(200)
+  progressPercent                     Decimal  @map("progress_percent") @db.Decimal(7, 4)
+  achievementThresholdPercentSnapshot Decimal  @map("achievement_threshold_percent_snapshot") @db.Decimal(5, 2)
+  rewardAmountSnapshot                Decimal  @map("reward_amount_snapshot") @db.Decimal(18, 0)
+  isAchieved                          Boolean  @map("is_achieved")
+  earnedAmount                        Decimal  @map("earned_amount") @db.Decimal(18, 0)
+  createdAt                           DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  salaryRecord SalaryRecord @relation(fields: [salaryRecordId], references: [id], onDelete: Cascade)
+  kpiGroup     KpiGroup     @relation(fields: [kpiGroupId], references: [id])
+  team         Team         @relation(fields: [teamId], references: [id])
+
+  @@unique([salaryRecordId, teamId, kpiGroupId])
+  @@index([kpiGroupId])
+  @@map("salary_record_kpi_items")
+}
+
+/// Snapshot kết quả của từng OKR độc lập tại thời điểm tính lương.
+model SalaryRecordOkrItem {
+  id                                  Int      @id @default(autoincrement())
+  salaryRecordId                      Int      @map("salary_record_id")
+  employeeOkrId                       Int      @map("employee_okr_id")
+  okrTitleSnapshot                    String   @map("okr_title_snapshot") @db.VarChar(250)
+  progressPercent                     Decimal  @map("progress_percent") @db.Decimal(7, 4)
+  achievementThresholdPercentSnapshot Decimal  @map("achievement_threshold_percent_snapshot") @db.Decimal(5, 2)
+  rewardAmountSnapshot                Decimal  @map("reward_amount_snapshot") @db.Decimal(18, 0)
+  isAchieved                          Boolean  @map("is_achieved")
+  earnedAmount                        Decimal  @map("earned_amount") @db.Decimal(18, 0)
+  createdAt                           DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  salaryRecord SalaryRecord @relation(fields: [salaryRecordId], references: [id], onDelete: Cascade)
+  employeeOkr  EmployeeOkr  @relation(fields: [employeeOkrId], references: [id])
+
+  @@unique([salaryRecordId, employeeOkrId])
+  @@index([employeeOkrId])
+  @@map("salary_record_okr_items")
+}
+
+/// Cấu phần mở để M14 hoặc nghiệp vụ tương lai thêm khoản thủ công mà không đổi schema engine.
+model SalaryRecordComponent {
+  id              Int                   @id @default(autoincrement())
+  salaryRecordId  Int                   @map("salary_record_id")
+  componentCode   String?               @map("component_code") @db.VarChar(80)
+  componentName   String                @map("component_name") @db.VarChar(150)
+  amount          Decimal               @db.Decimal(18, 0)
+  note            String?
+  source          SalaryComponentSource
+  createdByUserId String                @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime              @default(now()) @map("created_at") @db.Timestamptz()
+
+  salaryRecord SalaryRecord @relation(fields: [salaryRecordId], references: [id], onDelete: Cascade)
+  createdBy    User         @relation(fields: [createdByUserId], references: [id])
+
+  @@index([salaryRecordId])
+  @@map("salary_record_components")
+}
+
+/// Nhật ký bất biến của các thay đổi nghiệp vụ. Được tạo sớm từ M04 và hoàn thiện ở M13 với API
+/// xem/lọc/xuất CSV có scope SELF/TEAM/ALL; các index bên dưới phục vụ các bộ lọc vận hành chính.
+model AuditLog {
+  id                   Int      @id @default(autoincrement())
+  actorUserId          String   @map("actor_user_id") @db.Uuid
+  action               String   @db.VarChar(120)
+  entityType           String   @map("entity_type") @db.VarChar(80)
+  entityId             String   @map("entity_id") @db.VarChar(100)
+  targetEmployeeId     Int?     @map("target_employee_id")
+  payrollPeriodId      Int?     @map("payroll_period_id")
+  actorTeamIdSnapshot  Int?     @map("actor_team_id_snapshot")
+  targetTeamIdSnapshot Int?     @map("target_team_id_snapshot")
+  beforeData           Json?    @map("before_data")
+  afterData            Json?    @map("after_data")
+  reason               String?
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  actor          User           @relation(fields: [actorUserId], references: [id])
+  targetEmployee Employee?      @relation(fields: [targetEmployeeId], references: [id])
+  payrollPeriod  PayrollPeriod? @relation(fields: [payrollPeriodId], references: [id])
+
+  @@index([actorUserId, createdAt(sort: Desc)])
+  @@index([targetEmployeeId, createdAt(sort: Desc)])
+  @@index([payrollPeriodId, createdAt(sort: Desc)])
+  @@index([actorTeamIdSnapshot, createdAt(sort: Desc)])
+  @@index([targetTeamIdSnapshot, createdAt(sort: Desc)])
+  @@index([action, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
+/// Thông báo trong ứng dụng cho một tài khoản cụ thể. Đối tượng tham chiếu dùng String vì các
+/// entity nghiệp vụ hiện có cả khóa Int và UUID. Quyền xem luôn được chặn bằng recipientUserId,
+/// không dựa vào reference để tránh lộ dữ liệu qua hộp thư.
+model Notification {
+  id                  Int       @id @default(autoincrement())
+  recipientUserId     String    @map("recipient_user_id") @db.Uuid
+  notificationType    String    @map("notification_type") @db.VarChar(80)
+  title               String    @db.VarChar(200)
+  message             String
+  referenceEntityType String?   @map("reference_entity_type") @db.VarChar(80)
+  referenceEntityId   String?   @map("reference_entity_id") @db.VarChar(100)
+  isRead              Boolean   @default(false) @map("is_read")
+  readAt              DateTime? @map("read_at") @db.Timestamptz()
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  recipient User @relation(fields: [recipientUserId], references: [id], onDelete: Cascade)
+
+  @@index([recipientUserId, isRead, createdAt(sort: Desc)])
+  @@index([recipientUserId, createdAt(sort: Desc)])
+  @@map("notifications")
 }
