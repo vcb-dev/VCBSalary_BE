@@ -7,7 +7,7 @@ import { EmployeeGroupsController } from './employee-groups/employee-groups.cont
 import { EmployeeGroupsService } from './employee-groups/employee-groups.service';
 import { EmployeesController } from './employees/employees.controller';
 import { EmployeesService } from './employees/employees.service';
-import { AutomationGenVideoClient } from './organization-sync/clients/automation-gen-video.client';
+import { AutomationGenVideoClient } from '../../common/clients/automation-gen-video.client';
 import { OrganizationSyncController } from './organization-sync/organization-sync.controller';
 import { OrganizationSyncService } from './organization-sync/organization-sync.service';
 import { TeamsController } from './teams/teams.controller';

@@ -10,9 +10,9 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { RequirePermission } from '../../access-control/decorators/require-permission.decorator';
-import { CurrentUser } from '../../auth/decorators';
-import type { AuthUserPayload } from '../../auth/types';
+import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
+import { CurrentUser } from '../../../common/decorators/current-user.decorator';
+import type { AuthUserPayload } from '../../../common/types/auth-user.types';
 import {
   CreateKpiAssignmentDto,
   ListKpiAssignmentsQueryDto,

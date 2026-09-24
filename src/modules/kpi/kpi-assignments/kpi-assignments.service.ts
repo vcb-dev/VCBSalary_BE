@@ -5,7 +5,7 @@ import { AuthorizationService } from '../../access-control/authorization.service
 import { AppException } from '../../../common/errors/app.exception';
 import { ErrorCode } from '../../../common/errors/error-codes';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { assertPeriodOpenForDataEntry } from '../../payroll-periods/period-stage.util';
+import { assertPeriodOpenForDataEntry } from '../../../common/utils/period-stage.util';
 import { PeriodScopeService } from '../../access-control/period-scope.service';
 import type { CreateKpiAssignmentDto } from './dto/kpi-assignment.dto';
 

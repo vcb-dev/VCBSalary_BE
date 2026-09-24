@@ -10,9 +10,9 @@ import {
   Query,
 } from '@nestjs/common';
 import { PaginationQueryDto } from '../../../common/utils/pagination.dto';
-import { RequirePermission } from '../decorators/require-permission.decorator';
-import { CurrentUser } from '../../auth/decorators';
-import type { AuthUserPayload } from '../../auth/types';
+import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
+import { CurrentUser } from '../../../common/decorators/current-user.decorator';
+import type { AuthUserPayload } from '../../../common/types/auth-user.types';
 import { CreateUserDto, SetUserRolesDto, UpdateUserDto } from './dto/users.dto';
 import { UsersService } from './users.service';
 

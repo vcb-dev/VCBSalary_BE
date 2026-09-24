@@ -11,7 +11,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { RequirePermission } from '../../access-control/decorators/require-permission.decorator';
+import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
 import {
   CreateEmployeeGroupDto,
   ListEmployeeGroupsQueryDto,

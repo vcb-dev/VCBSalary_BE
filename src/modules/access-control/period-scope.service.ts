@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import type { ResolvedScope } from './authorization.service';
+import type { ResolvedScope } from '../../common/types/resolved-scope.types';
 
 /**
  * Resolves abstract access-control scopes against the employee-team snapshot of a payroll period.

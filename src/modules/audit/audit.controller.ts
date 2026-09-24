@@ -7,9 +7,9 @@ import {
   Res,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { RequirePermission } from '../access-control/decorators/require-permission.decorator';
-import { CurrentUser } from '../auth/decorators';
-import type { AuthUserPayload } from '../auth/types';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import type { AuthUserPayload } from '../../common/types/auth-user.types';
 import { AuditQueryService } from './audit-query.service';
 import {
   ExportAuditLogsQueryDto,

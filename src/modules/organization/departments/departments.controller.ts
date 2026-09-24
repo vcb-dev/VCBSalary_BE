@@ -10,7 +10,7 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
-import { RequirePermission } from '../../access-control/decorators/require-permission.decorator';
+import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
 import { CreateDepartmentDto, UpdateDepartmentDto } from './dto/department.dto';
 import { DepartmentsService } from './departments.service';
 

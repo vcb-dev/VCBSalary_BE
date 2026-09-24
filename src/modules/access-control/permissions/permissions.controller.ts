@@ -1,5 +1,5 @@
 import { Controller, Get } from '@nestjs/common';
-import { RequirePermission } from '../decorators/require-permission.decorator';
+import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
 import { PermissionsService } from './permissions.service';
 
 @Controller('permissions')

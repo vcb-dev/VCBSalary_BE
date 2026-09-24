@@ -8,7 +8,8 @@ import { AppException } from '../../common/errors/app.exception';
 import { ErrorCode } from '../../common/errors/error-codes';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
-import type { AuthUserPayload, JwtPayload } from './types';
+import type { AuthUserPayload } from '../../common/types/auth-user.types';
+import type { JwtPayload } from './types';
 
 type DbUser = {
   id: string;

@@ -20,8 +20,8 @@ import {
   AutomationGenVideoClient,
   type AutomationGenVideoTeamDetail,
   type AutomationGenVideoTeamMember,
-} from './clients/automation-gen-video.client';
-import { matchEmployeesByEmailOrName } from './employee-identity-matcher';
+} from '../../../common/clients/automation-gen-video.client';
+import { matchEmployeesByEmailOrName } from '../../../common/utils/employee-identity-matcher';
 
 const SOURCE_SYSTEM = 'AUTOMATION_GEN_VIDEO';
 /// Mã nhóm nghiệp vụ theo contract của AutomationGenVideo — nguồn chỉ sinh ra nhân sự Marketing

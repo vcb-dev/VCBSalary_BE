@@ -1,4 +1,4 @@
-import type { AutomationGenVideoTeamMember } from './clients/automation-gen-video.client';
+import type { AutomationGenVideoTeamMember } from '../clients/automation-gen-video.client';
 
 export type SourceEmployeeIdentity = Pick<
   AutomationGenVideoTeamMember,

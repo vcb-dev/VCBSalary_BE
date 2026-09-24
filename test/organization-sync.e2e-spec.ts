@@ -5,7 +5,7 @@ import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
-import { AutomationGenVideoClient } from '../src/modules/organization/organization-sync/clients/automation-gen-video.client';
+import { AutomationGenVideoClient } from '../src/common/clients/automation-gen-video.client';
 
 interface ErrorBody {
   code: string;

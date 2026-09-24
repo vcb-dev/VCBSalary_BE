@@ -5,7 +5,7 @@ import { ErrorCode } from '../../common/errors/error-codes';
 import { paginate, toSkipTake } from '../../common/utils/pagination.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthorizationService } from '../access-control/authorization.service';
-import type { ResolvedScope } from '../access-control/authorization.service';
+import type { ResolvedScope } from '../../common/types/resolved-scope.types';
 import type {
   ExportAuditLogsQueryDto,
   ListAuditLogsQueryDto,

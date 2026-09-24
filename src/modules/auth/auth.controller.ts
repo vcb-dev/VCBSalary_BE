@@ -14,10 +14,11 @@ import { UsersService } from '../access-control/users/users.service';
 import { AuthService } from './auth.service';
 import { CookieAuthService } from './cookie-auth.service';
 import { COOKIE_REFRESH } from './cookie.constants';
-import { CurrentUser, Public } from './decorators';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Public } from '../../common/decorators/public.decorator';
 import { LoginDto } from './dto/login.dto';
 import { LoginRateLimitService } from './login-rate-limit.service';
-import type { AuthUserPayload } from './types';
+import type { AuthUserPayload } from '../../common/types/auth-user.types';
 
 @Controller('auth')
 export class AuthController {

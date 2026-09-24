@@ -10,7 +10,7 @@ import {
   assertPeriodInReview,
   assertPeriodOpenOrInReview,
   assertPeriodOpenForDataEntry,
-} from '../payroll-periods/period-stage.util';
+} from '../../common/utils/period-stage.util';
 import type {
   CreateEmployeeOkrDto,
   LeaderRejectOkrDto,

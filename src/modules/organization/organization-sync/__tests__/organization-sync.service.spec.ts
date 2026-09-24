@@ -1,5 +1,5 @@
 import { OrganizationSyncService } from '../organization-sync.service';
-import type { AutomationGenVideoTeamDetail } from '../clients/automation-gen-video.client';
+import type { AutomationGenVideoTeamDetail } from '../../../../common/clients/automation-gen-video.client';
 
 function makePrismaMock() {
   return {

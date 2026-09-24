@@ -3,7 +3,7 @@ import type { KpiOkrProposal, Prisma } from '@prisma/client';
 import { AuditLogService } from '../audit/audit-log.service';
 import { AuthorizationService } from '../access-control/authorization.service';
 import { PeriodScopeService } from '../access-control/period-scope.service';
-import type { ResolvedScope } from '../access-control/authorization.service';
+import type { ResolvedScope } from '../../common/types/resolved-scope.types';
 import { AppException } from '../../common/errors/app.exception';
 import { ErrorCode } from '../../common/errors/error-codes';
 import { PrismaService } from '../../prisma/prisma.service';

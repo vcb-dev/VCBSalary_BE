@@ -1,12 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ScopeType } from '@prisma/client';
+import type { ResolvedScope } from '../../common/types/resolved-scope.types';
 import { PrismaService } from '../../prisma/prisma.service';
-
-export type ResolvedScope =
-  | { type: 'NONE' }
-  | { type: 'SELF' }
-  | { type: 'TEAM'; teamIds: number[] }
-  | { type: 'ALL' };
 
 type ScopeLevel = 'self' | 'team' | 'all';
 type RoleGrant = {

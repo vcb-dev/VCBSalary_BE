@@ -1,7 +1,7 @@
 import { HttpStatus } from '@nestjs/common';
 import type { PayrollPeriodStatus } from '@prisma/client';
-import { AppException } from '../../common/errors/app.exception';
-import { ErrorCode } from '../../common/errors/error-codes';
+import { AppException } from '../errors/app.exception';
+import { ErrorCode } from '../errors/error-codes';
 
 /**
  * Vòng đời kỳ lương (Phần 4 đặc tả) chia dữ liệu KPI/OKR thành hai giai đoạn tách bạch, và mọi

@@ -9,7 +9,7 @@ import type { Request } from 'express';
 import { AppException } from '../../../common/errors/app.exception';
 import { ErrorCode } from '../../../common/errors/error-codes';
 import { AuthorizationService } from '../authorization.service';
-import { REQUIRED_PERMISSION_KEY } from '../decorators/require-permission.decorator';
+import { REQUIRED_PERMISSION_KEY } from '../../../common/decorators/require-permission.decorator';
 
 @Injectable()
 export class PermissionsGuard implements CanActivate {

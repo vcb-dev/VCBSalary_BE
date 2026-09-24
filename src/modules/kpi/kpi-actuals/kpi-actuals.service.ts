@@ -13,7 +13,7 @@ import { PeriodScopeService } from '../../access-control/period-scope.service';
 import {
   assertPeriodInReview,
   assertPeriodOpenOrInReview,
-} from '../../payroll-periods/period-stage.util';
+} from '../../../common/utils/period-stage.util';
 import type {
   LeaderRejectKpiDto,
   ManualKpiActualDto,

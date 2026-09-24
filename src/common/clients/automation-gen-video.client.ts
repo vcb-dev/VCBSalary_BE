@@ -1,7 +1,7 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AppException } from '../../../../common/errors/app.exception';
-import { ErrorCode } from '../../../../common/errors/error-codes';
+import { AppException } from '../errors/app.exception';
+import { ErrorCode } from '../errors/error-codes';
 
 export interface AutomationGenVideoTeamMember {
   user_id: string;

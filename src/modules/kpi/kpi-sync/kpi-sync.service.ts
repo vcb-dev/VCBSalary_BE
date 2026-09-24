@@ -18,8 +18,8 @@ import { AuditLogService } from '../../audit/audit-log.service';
 import {
   AutomationGenVideoClient,
   type AutomationGenVideoKpiRecord,
-} from '../../organization/organization-sync/clients/automation-gen-video.client';
-import { matchEmployeesByEmailOrName } from '../../organization/organization-sync/employee-identity-matcher';
+} from '../../../common/clients/automation-gen-video.client';
+import { matchEmployeesByEmailOrName } from '../../../common/utils/employee-identity-matcher';
 import type { TriggerKpiSyncDto } from './dto/kpi-sync.dto';
 
 type ResolvedRecord = {
