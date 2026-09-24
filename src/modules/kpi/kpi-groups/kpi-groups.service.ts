@@ -416,7 +416,7 @@ export class KpiGroupsService {
     if (dataSource === KpiDataSource.AUTOMATION_GEN_VIDEO) {
       throw new AppException(
         ErrorCode.VALIDATION_ERROR,
-        'Nguồn AutomationGenVideo chưa được hỗ trợ; hãy dùng nguồn nhập tay.',
+        'Nguồn VCBI chưa được hỗ trợ; hãy dùng nguồn nhập tay.',
         HttpStatus.BAD_REQUEST,
       );
     }

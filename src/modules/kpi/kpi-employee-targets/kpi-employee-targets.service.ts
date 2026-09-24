@@ -57,7 +57,7 @@ export class EmployeeKpiTargetsService {
     if (existing?.dataSource === 'AUTOMATION_GEN_VIDEO') {
       throw new AppException(
         ErrorCode.VALIDATION_ERROR,
-        'Target này được đồng bộ từ AutomationGenVideo, không thể nhập tay ghi đè',
+        'Target này được đồng bộ từ VCBI, không thể nhập tay ghi đè',
         HttpStatus.BAD_REQUEST,
       );
     }

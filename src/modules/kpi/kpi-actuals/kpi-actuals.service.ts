@@ -242,7 +242,7 @@ export class KpiActualsService {
     ) {
       throw new AppException(
         ErrorCode.VALIDATION_ERROR,
-        'Actual này được đồng bộ từ AutomationGenVideo, không thể nhập trực tiếp',
+        'Actual này được đồng bộ từ VCBI, không thể nhập trực tiếp',
         HttpStatus.BAD_REQUEST,
       );
     }
@@ -351,8 +351,7 @@ export class KpiActualsService {
           syncedAt: null,
           requiresManualEntry: false,
           manualEnteredAt: new Date(),
-          syncMessage:
-            'Đã nhập tay do nguồn AutomationGenVideo không có actual',
+          syncMessage: 'Đã nhập tay do nguồn VCBI không có actual',
         },
       });
       this.assertClaimed(claimed.count);

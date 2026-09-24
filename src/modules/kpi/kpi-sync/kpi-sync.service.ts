@@ -81,7 +81,7 @@ export class KpiSyncService {
     if (!team) {
       throw new AppException(
         ErrorCode.VALIDATION_ERROR,
-        'Team chưa được đồng bộ từ AutomationGenVideo. Hãy đồng bộ cơ cấu tổ chức trước.',
+        'Team chưa được đồng bộ từ VCBI. Hãy đồng bộ cơ cấu tổ chức trước.',
         HttpStatus.BAD_REQUEST,
       );
     }
@@ -277,7 +277,7 @@ export class KpiSyncService {
     ) {
       throw new AppException(
         ErrorCode.INTERNAL_ERROR,
-        'Dữ liệu KPI từ AutomationGenVideo không đúng team/tháng hoặc sai định dạng',
+        'Dữ liệu KPI từ VCBI không đúng team/tháng hoặc sai định dạng',
         HttpStatus.BAD_GATEWAY,
       );
     }

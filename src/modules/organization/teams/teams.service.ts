@@ -56,7 +56,7 @@ export class TeamsService {
       ) {
         throw new AppException(
           ErrorCode.VALIDATION_ERROR,
-          'Team đồng bộ từ AutomationGenVideo luôn thuộc phòng Marketing',
+          'Team đồng bộ từ VCBI luôn thuộc phòng Marketing',
           HttpStatus.BAD_REQUEST,
         );
       }
@@ -88,7 +88,7 @@ export class TeamsService {
     if (team.sourceSystem === 'AUTOMATION_GEN_VIDEO') {
       throw new AppException(
         ErrorCode.VALIDATION_ERROR,
-        'Team đồng bộ từ AutomationGenVideo sẽ được tạo lại ở lần đồng bộ sau nên không xóa được. Hãy chuyển trạng thái sang "Ngừng hoạt động".',
+        'Team đồng bộ từ VCBI sẽ được tạo lại ở lần đồng bộ sau nên không xóa được. Hãy chuyển trạng thái sang "Ngừng hoạt động".',
         HttpStatus.BAD_REQUEST,
       );
     }

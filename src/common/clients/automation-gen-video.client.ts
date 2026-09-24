@@ -74,7 +74,7 @@ export class AutomationGenVideoClient {
     if (!response.ok) {
       throw new AppException(
         ErrorCode.INTERNAL_ERROR,
-        `AutomationGenVideo trả lỗi khi lấy danh sách team (HTTP ${response.status})`,
+        `VCBI trả lỗi khi lấy danh sách team (HTTP ${response.status})`,
         HttpStatus.BAD_GATEWAY,
       );
     }
@@ -91,7 +91,7 @@ export class AutomationGenVideoClient {
     if (!teams) {
       throw new AppException(
         ErrorCode.INTERNAL_ERROR,
-        'AutomationGenVideo trả dữ liệu danh sách team không hợp lệ',
+        'VCBI trả dữ liệu danh sách team không hợp lệ',
         HttpStatus.BAD_GATEWAY,
       );
     }
@@ -112,14 +112,14 @@ export class AutomationGenVideoClient {
     if (response.status === 404) {
       throw new AppException(
         ErrorCode.NOT_FOUND,
-        'Không tìm thấy team bên AutomationGenVideo',
+        'Không tìm thấy team bên VCBI',
         HttpStatus.NOT_FOUND,
       );
     }
     if (!response.ok) {
       throw new AppException(
         ErrorCode.INTERNAL_ERROR,
-        `AutomationGenVideo trả lỗi khi lấy dữ liệu team (HTTP ${response.status})`,
+        `VCBI trả lỗi khi lấy dữ liệu team (HTTP ${response.status})`,
         HttpStatus.BAD_GATEWAY,
       );
     }
@@ -143,14 +143,14 @@ export class AutomationGenVideoClient {
     if (response.status === 404) {
       throw new AppException(
         ErrorCode.NOT_FOUND,
-        'Không tìm thấy team bên AutomationGenVideo',
+        'Không tìm thấy team bên VCBI',
         HttpStatus.NOT_FOUND,
       );
     }
     if (!response.ok) {
       throw new AppException(
         ErrorCode.INTERNAL_ERROR,
-        `AutomationGenVideo trả lỗi khi lấy KPI (HTTP ${response.status})`,
+        `VCBI trả lỗi khi lấy KPI (HTTP ${response.status})`,
         HttpStatus.BAD_GATEWAY,
       );
     }
