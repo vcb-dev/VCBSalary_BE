@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { Injectable, Logger, type NestMiddleware } from '@nestjs/common';
 import type { NextFunction, Request, Response } from 'express';
+import { runInRequestContext } from '../request-context';
 
 declare module 'express-serve-static-core' {
   interface Request {
@@ -30,6 +31,6 @@ export class RequestContextMiddleware implements NestMiddleware {
       );
     });
 
-    next();
+    runInRequestContext(() => next());
   }
 }

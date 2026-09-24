@@ -53,19 +53,12 @@ export class TrafficService {
 
   /** Danh sách snapshot trong scope, dùng cho bộ chọn nhân sự và số liệu tổng quan trên FE. */
   async list(userId: string, periodId: number, query: ListTrafficQueryDto) {
-    await this.assertPeriodExists(periodId);
     const scope = await this.authorization.resolveScope(userId, 'traffic');
     const selfEmployeeId =
       scope.type === 'SELF'
         ? await this.authorization.getEmployeeId(userId)
         : null;
-    const employeeIds = await this.periodScope.resolveEmployeeIds(
-      scope,
-      periodId,
-      selfEmployeeId,
-    );
-    const scopeWhere: Prisma.PayrollPeriodEmployeeSnapshotWhereInput =
-      employeeIds === 'ALL' ? {} : { employeeId: { in: employeeIds } };
+    const scopeWhere = this.periodScope.snapshotWhere(scope, selfEmployeeId);
     const filterWhere: Prisma.PayrollPeriodEmployeeSnapshotWhereInput = {
       teamIdSnapshot: query.teamId,
       OR: query.search
@@ -91,7 +84,9 @@ export class TrafficService {
     };
     const { skip, take } = toSkipTake(query.page, query.pageSize);
 
-    const [snapshots, total] = await this.prisma.$transaction([
+    // Kiểm tra kỳ chạy song song với truy vấn danh sách; kỳ không tồn tại vẫn trả 404 như cũ.
+    const [, snapshots, total] = await Promise.all([
+      this.assertPeriodExists(periodId),
       this.prisma.payrollPeriodEmployeeSnapshot.findMany({
         where,
         skip,

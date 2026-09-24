@@ -111,7 +111,7 @@ export class NotificationsService {
       notificationType: query.type || undefined,
     };
     const { skip, take } = toSkipTake(query.page, query.pageSize);
-    const [rows, total, unreadCount] = await this.prisma.$transaction([
+    const [rows, total, unreadCount] = await Promise.all([
       this.prisma.notification.findMany({
         where,
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],

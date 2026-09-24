@@ -64,7 +64,7 @@ export class EmployeesService {
     };
 
     const { skip, take } = toSkipTake(query.page, query.pageSize);
-    const [data, total] = await this.prisma.$transaction([
+    const [data, total] = await Promise.all([
       this.prisma.employee.findMany({
         where,
         skip,

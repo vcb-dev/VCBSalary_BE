@@ -133,19 +133,17 @@ export class PayrollPeriodsService
     const where: Prisma.PayrollPeriodWhereInput = query.year
       ? { payrollYear: query.year }
       : {};
-    return this.prisma
-      .$transaction([
-        this.prisma.payrollPeriod.findMany({
-          where,
-          skip,
-          take,
-          orderBy: [{ payrollYear: 'desc' }, { payrollMonth: 'desc' }],
-        }),
-        this.prisma.payrollPeriod.count({ where }),
-      ])
-      .then(([data, total]) =>
-        paginate(data, total, query.page, query.pageSize),
-      );
+    return Promise.all([
+      this.prisma.payrollPeriod.findMany({
+        where,
+        skip,
+        take,
+        orderBy: [{ payrollYear: 'desc' }, { payrollMonth: 'desc' }],
+      }),
+      this.prisma.payrollPeriod.count({ where }),
+    ]).then(([data, total]) =>
+      paginate(data, total, query.page, query.pageSize),
+    );
   }
 
   async listYears(): Promise<number[]> {
@@ -880,7 +878,7 @@ export class PayrollPeriodsService
     const where: Prisma.PayrollPeriodEmployeeSnapshotWhereInput = {
       payrollPeriodId: id,
     };
-    const [data, total] = await this.prisma.$transaction([
+    const [data, total] = await Promise.all([
       this.prisma.payrollPeriodEmployeeSnapshot.findMany({
         where,
         skip,

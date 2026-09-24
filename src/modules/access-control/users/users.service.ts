@@ -47,7 +47,7 @@ export class UsersService {
 
   async list(query: PaginationQueryDto) {
     const { skip, take } = toSkipTake(query.page, query.pageSize);
-    const [data, total] = await this.prisma.$transaction([
+    const [data, total] = await Promise.all([
       this.prisma.user.findMany({
         skip,
         take,

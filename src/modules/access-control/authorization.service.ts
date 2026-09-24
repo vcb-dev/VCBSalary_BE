@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { ScopeType } from '@prisma/client';
+import { Prisma, ScopeType } from '@prisma/client';
+import { memoizeForRequest } from '../../common/request-context';
 import type { ResolvedScope } from '../../common/types/resolved-scope.types';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -12,6 +13,30 @@ type RoleGrant = {
   };
 };
 
+const ACCESS_PROFILE_SELECT = {
+  id: true,
+  email: true,
+  status: true,
+  employeeId: true,
+  userRoles: {
+    select: {
+      scopeType: true,
+      scopeTeamId: true,
+      role: {
+        select: {
+          rolePermissions: {
+            select: { permission: { select: { code: true } } },
+          },
+        },
+      },
+    },
+  },
+} satisfies Prisma.UserSelect;
+
+export type AccessProfile = Prisma.UserGetPayload<{
+  select: typeof ACCESS_PROFILE_SELECT;
+}>;
+
 const SCOPE_RANK: Record<ScopeLevel, number> = {
   self: 1,
   team: 2,
@@ -22,17 +47,22 @@ const SCOPE_RANK: Record<ScopeLevel, number> = {
 export class AuthorizationService {
   constructor(private readonly prisma: PrismaService) {}
 
-  private loadUserRoleGrants(userId: string) {
-    return this.prisma.userRole.findMany({
-      where: { userId },
-      include: {
-        role: {
-          include: {
-            rolePermissions: { include: { permission: true } },
-          },
-        },
-      },
-    });
+  /**
+   * Tài khoản + mọi lần gán role + employeeId trong một truy vấn, dùng chung cho cả request: JWT
+   * strategy, PermissionsGuard và service không phải tải lại role/permission mỗi lần hỏi scope.
+   */
+  getAccessProfile(userId: string): Promise<AccessProfile | null> {
+    return memoizeForRequest(`access-profile:${userId}`, () =>
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: ACCESS_PROFILE_SELECT,
+      }),
+    );
+  }
+
+  private async loadUserRoleGrants(userId: string): Promise<RoleGrant[]> {
+    const profile = await this.getAccessProfile(userId);
+    return profile?.userRoles ?? [];
   }
 
   async getPermissionCodes(userId: string): Promise<Set<string>> {
@@ -81,11 +111,8 @@ export class AuthorizationService {
 
   /** employeeId của user hiện tại, dùng để lọc dữ liệu khi resolveScope trả về SELF. */
   async getEmployeeId(userId: string): Promise<number | null> {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { employeeId: true },
-    });
-    return user?.employeeId ?? null;
+    const profile = await this.getAccessProfile(userId);
+    return profile?.employeeId ?? null;
   }
 
   private collectPermissionCodes(grants: readonly RoleGrant[]): Set<string> {

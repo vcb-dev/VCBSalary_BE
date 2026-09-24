@@ -6,6 +6,7 @@ import * as bcrypt from 'bcryptjs';
 import { createHash, randomBytes } from 'crypto';
 import { AppException } from '../../common/errors/app.exception';
 import { ErrorCode } from '../../common/errors/error-codes';
+import { AuthorizationService } from '../access-control/authorization.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
 import type { AuthUserPayload } from '../../common/types/auth-user.types';
@@ -24,6 +25,10 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
+    // Mặc định để unit test dựng service với 3 tham số như cũ; Nest vẫn inject bản dùng chung.
+    private readonly authorization: AuthorizationService = new AuthorizationService(
+      prisma,
+    ),
   ) {}
 
   async login(dto: LoginDto) {
@@ -117,10 +122,8 @@ export class AuthService {
         HttpStatus.UNAUTHORIZED,
       );
     }
-    const user = await this.prisma.user.findUnique({
-      where: { id: payload.sub },
-      select: { id: true, email: true, status: true },
-    });
+    // Cùng truy vấn với hồ sơ quyền mà PermissionsGuard/service dùng sau đó trong request này.
+    const user = await this.authorization.getAccessProfile(payload.sub);
     if (!user) {
       throw new AppException(
         ErrorCode.UNAUTHORIZED,

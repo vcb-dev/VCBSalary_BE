@@ -26,42 +26,48 @@ export class KpiAssignmentsService {
     employeeIdFilter?: number,
     teamIdFilter?: number,
   ) {
-    await this.assertPeriodExists(periodId);
-
     const scope = await this.authorization.resolveScope(userId, 'kpi');
     const selfEmployeeId =
       scope.type === 'SELF'
         ? await this.authorization.getEmployeeId(userId)
         : null;
-    const scopedIds = await this.periodScope.resolveEmployeeIds(
-      scope,
-      periodId,
-      selfEmployeeId,
-    );
 
     const where: Prisma.EmployeeKpiAssignmentWhereInput = {
       AND: [
         { payrollPeriodId: periodId },
         employeeIdFilter ? { employeeId: employeeIdFilter } : {},
         teamIdFilter ? { teamId: teamIdFilter } : {},
-        scopedIds === 'ALL' ? {} : { employeeId: { in: scopedIds } },
+        scope.type === 'ALL'
+          ? {}
+          : {
+              employee: this.periodScope.employeeWhere(
+                scope,
+                periodId,
+                selfEmployeeId,
+              ),
+            },
       ],
     };
 
-    return this.prisma.employeeKpiAssignment.findMany({
-      where,
-      include: {
-        employee: {
-          select: { id: true, employeeCode: true, fullName: true },
+    // Kiểm tra kỳ chạy song song với truy vấn danh sách; kỳ không tồn tại vẫn trả 404 như cũ.
+    const [, assignments] = await Promise.all([
+      this.assertPeriodExists(periodId),
+      this.prisma.employeeKpiAssignment.findMany({
+        where,
+        include: {
+          employee: {
+            select: { id: true, employeeCode: true, fullName: true },
+          },
+          kpiGroup: { select: { id: true, code: true, name: true } },
+          team: { select: { id: true, code: true, name: true } },
         },
-        kpiGroup: { select: { id: true, code: true, name: true } },
-        team: { select: { id: true, code: true, name: true } },
-      },
-      orderBy: [
-        { employee: { fullName: 'asc' } },
-        { kpiGroup: { name: 'asc' } },
-      ],
-    });
+        orderBy: [
+          { employee: { fullName: 'asc' } },
+          { kpiGroup: { name: 'asc' } },
+        ],
+      }),
+    ]);
+    return assignments;
   }
 
   /**

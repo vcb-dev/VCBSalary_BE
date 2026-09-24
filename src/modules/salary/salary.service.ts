@@ -299,17 +299,11 @@ export class SalaryService {
     periodId: number,
     query: ListSalaryRecordsQueryDto,
   ) {
-    await this.assertPeriodExists(periodId);
     const scope = await this.authorization.resolveScope(actorUserId, 'salary');
     const selfEmployeeId =
       scope.type === 'SELF'
         ? await this.authorization.getEmployeeId(actorUserId)
         : null;
-    const employeeIds = await this.periodScope.resolveEmployeeIds(
-      scope,
-      periodId,
-      selfEmployeeId,
-    );
     const departmentTeamIds = query.departmentId
       ? (
           await this.prisma.team.findMany({
@@ -318,8 +312,7 @@ export class SalaryService {
           })
         ).map((team) => team.id)
       : null;
-    const scopeWhere: Prisma.PayrollPeriodEmployeeSnapshotWhereInput =
-      employeeIds === 'ALL' ? {} : { employeeId: { in: employeeIds } };
+    const scopeWhere = this.periodScope.snapshotWhere(scope, selfEmployeeId);
     const filterWhere: Prisma.PayrollPeriodEmployeeSnapshotWhereInput = {
       AND: [
         query.departmentId
@@ -349,7 +342,9 @@ export class SalaryService {
       AND: [scopeWhere, filterWhere],
     };
     const { skip, take } = toSkipTake(query.page, query.pageSize);
-    const [snapshots, total] = await this.prisma.$transaction([
+    // Kiểm tra kỳ chạy song song với truy vấn danh sách; kỳ không tồn tại vẫn trả 404 như cũ.
+    const [, snapshots, total] = await Promise.all([
+      this.assertPeriodExists(periodId),
       this.prisma.payrollPeriodEmployeeSnapshot.findMany({
         where,
         skip,

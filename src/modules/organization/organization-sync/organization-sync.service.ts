@@ -276,7 +276,7 @@ export class OrganizationSyncService {
 
   async listRuns(query: PaginationQueryDto) {
     const { skip, take } = toSkipTake(query.page, query.pageSize);
-    const [data, total] = await this.prisma.$transaction([
+    const [data, total] = await Promise.all([
       this.prisma.orgSyncRun.findMany({
         skip,
         take,

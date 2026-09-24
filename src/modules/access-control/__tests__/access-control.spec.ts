@@ -1,4 +1,7 @@
+import { runInRequestContext } from '../../../common/request-context';
 import { AuthorizationService } from '../authorization.service';
+import type { ResolvedScope } from '../../../common/types/resolved-scope.types';
+import { PeriodScopeService } from '../period-scope.service';
 import { RolesService } from '../roles/roles.service';
 import { UsersService } from '../users/users.service';
 
@@ -34,13 +37,23 @@ function makeGrant(
   };
 }
 
-function serviceWithGrants(grants: FakeGrant[]) {
+function serviceWithGrants(
+  grants: FakeGrant[],
+  employeeId: number | null = null,
+) {
   const prisma = {
-    userRole: {
-      findMany: jest.fn().mockResolvedValue(grants),
+    user: {
+      findUnique: jest
+        .fn()
+        .mockResolvedValue({ id: 'u1', employeeId, userRoles: grants }),
     },
   };
   return new AuthorizationService(prisma as never);
+}
+
+function accessProfileLookup(service: AuthorizationService): jest.Mock {
+  return (service as unknown as { prisma: { user: { findUnique: jest.Mock } } })
+    .prisma.user.findUnique;
 }
 
 describe('AuthorizationService', () => {
@@ -164,6 +177,97 @@ describe('AuthorizationService', () => {
         service.resolvePermissionScope('u1', 'kpi.leader_approve'),
       ).resolves.toEqual({ type: 'ALL' });
     });
+  });
+
+  describe('per-request access profile', () => {
+    it('loads roles and employeeId once for every check in the same request', async () => {
+      const service = serviceWithGrants([makeGrant(['kpi.view_team'], 3)], 42);
+
+      await runInRequestContext(async () => {
+        await service.hasAnyPermission('u1', ['kpi.view_team']);
+        await expect(service.resolveScope('u1', 'kpi')).resolves.toEqual({
+          type: 'TEAM',
+          teamIds: [3],
+        });
+        await expect(service.getEmployeeId('u1')).resolves.toBe(42);
+      });
+
+      expect(accessProfileLookup(service)).toHaveBeenCalledTimes(1);
+    });
+
+    it('never reuses a profile across requests or outside a request', async () => {
+      const service = serviceWithGrants([makeGrant(['kpi.view_self'])]);
+
+      await runInRequestContext(() => service.getPermissionCodes('u1'));
+      await runInRequestContext(() => service.getPermissionCodes('u1'));
+      await service.getPermissionCodes('u1');
+      await service.getPermissionCodes('u1');
+
+      expect(accessProfileLookup(service)).toHaveBeenCalledTimes(4);
+    });
+
+    it('retries after a failed lookup within the same request', async () => {
+      const service = serviceWithGrants([makeGrant(['kpi.view_self'])]);
+      accessProfileLookup(service).mockRejectedValueOnce(
+        new Error('connection reset'),
+      );
+
+      await runInRequestContext(async () => {
+        await expect(service.getPermissionCodes('u1')).rejects.toThrow(
+          'connection reset',
+        );
+        await expect(
+          service.hasPermission('u1', 'kpi.view_self'),
+        ).resolves.toBe(true);
+      });
+
+      expect(accessProfileLookup(service)).toHaveBeenCalledTimes(2);
+    });
+  });
+});
+
+/* ==========================================================================
+ * PeriodScopeService — scope nhúng thẳng vào truy vấn danh sách của kỳ
+ * ========================================================================== */
+
+describe('PeriodScopeService inline scope filters', () => {
+  const periodScope = new PeriodScopeService({} as never);
+  const NO_MATCH = { id: { in: [] } };
+
+  it('matches snapshots through the period team snapshot for TEAM scope', () => {
+    expect(
+      periodScope.snapshotWhere({ type: 'TEAM', teamIds: [1, 2] }, null),
+    ).toEqual({ teamSnapshots: { some: { teamId: { in: [1, 2] } } } });
+    expect(
+      periodScope.employeeWhere({ type: 'TEAM', teamIds: [1, 2] }, 7, null),
+    ).toEqual({
+      periodTeamSnapshots: {
+        some: { payrollPeriodId: 7, teamId: { in: [1, 2] } },
+      },
+    });
+  });
+
+  it('limits SELF scope to the linked employee and ALL scope to nothing', () => {
+    expect(periodScope.snapshotWhere({ type: 'SELF' }, 5)).toEqual({
+      employeeId: 5,
+    });
+    expect(periodScope.employeeWhere({ type: 'SELF' }, 7, 5)).toEqual({
+      id: 5,
+    });
+    expect(periodScope.snapshotWhere({ type: 'ALL' }, null)).toEqual({});
+    expect(periodScope.employeeWhere({ type: 'ALL' }, 7, null)).toEqual({});
+  });
+
+  it('matches no rows without a usable scope', () => {
+    const unusable: ResolvedScope[] = [
+      { type: 'NONE' },
+      { type: 'SELF' },
+      { type: 'TEAM', teamIds: [] },
+    ];
+    for (const scope of unusable) {
+      expect(periodScope.snapshotWhere(scope, null)).toEqual(NO_MATCH);
+      expect(periodScope.employeeWhere(scope, 7, null)).toEqual(NO_MATCH);
+    }
   });
 });
 

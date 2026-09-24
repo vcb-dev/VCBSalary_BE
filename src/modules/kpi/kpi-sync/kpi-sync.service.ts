@@ -220,7 +220,7 @@ export class KpiSyncService {
 
   async list(query: PaginationQueryDto) {
     const { skip, take } = toSkipTake(query.page, query.pageSize);
-    const [runs, total] = await this.prisma.$transaction([
+    const [runs, total] = await Promise.all([
       this.prisma.kpiSyncRun.findMany({
         skip,
         take,

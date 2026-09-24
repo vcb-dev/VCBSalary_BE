@@ -82,7 +82,7 @@ export class AuditQueryService {
   async list(userId: string, query: ListAuditLogsQueryDto) {
     const where = await this.buildWhere(userId, query);
     const { skip, take } = toSkipTake(query.page, query.pageSize);
-    const [rows, total] = await this.prisma.$transaction([
+    const [rows, total] = await Promise.all([
       this.prisma.auditLog.findMany({
         where,
         include: auditInclude,

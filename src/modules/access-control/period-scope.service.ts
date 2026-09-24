@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { ResolvedScope } from '../../common/types/resolved-scope.types';
+
+/** Empty IN() luôn trả về 0 dòng. */
+const NO_MATCH = { id: { in: [] } };
 
 /**
  * Resolves abstract access-control scopes against the employee-team snapshot of a payroll period.
@@ -70,6 +74,40 @@ export class PeriodScopeService {
           select: { employeeId: true },
         });
     return snapshots.map(({ employeeId }) => employeeId);
+  }
+
+  /**
+   * Scope của kỳ dưới dạng điều kiện lọc snapshot (subquery EXISTS trên snapshot team), để nhúng
+   * thẳng vào truy vấn danh sách thay vì `resolveEmployeeIds` rồi `IN (...)` — bớt một round-trip.
+   */
+  snapshotWhere(
+    scope: ResolvedScope,
+    selfEmployeeId: number | null,
+  ): Prisma.PayrollPeriodEmployeeSnapshotWhereInput {
+    if (scope.type === 'ALL') return {};
+    if (scope.type === 'SELF') {
+      return selfEmployeeId ? { employeeId: selfEmployeeId } : NO_MATCH;
+    }
+    if (scope.type !== 'TEAM' || scope.teamIds.length === 0) return NO_MATCH;
+    return { teamSnapshots: { some: { teamId: { in: scope.teamIds } } } };
+  }
+
+  /** Như `snapshotWhere`, cho bảng dữ liệu theo kỳ có quan hệ `employee` (KPI assignment, …). */
+  employeeWhere(
+    scope: ResolvedScope,
+    periodId: number,
+    selfEmployeeId: number | null,
+  ): Prisma.EmployeeWhereInput {
+    if (scope.type === 'ALL') return {};
+    if (scope.type === 'SELF') {
+      return selfEmployeeId ? { id: selfEmployeeId } : NO_MATCH;
+    }
+    if (scope.type !== 'TEAM' || scope.teamIds.length === 0) return NO_MATCH;
+    return {
+      periodTeamSnapshots: {
+        some: { payrollPeriodId: periodId, teamId: { in: scope.teamIds } },
+      },
+    };
   }
 
   async includesEmployeeTeam(

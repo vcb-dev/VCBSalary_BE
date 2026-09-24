@@ -1,5 +1,8 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  // DB ở Singapore: mỗi round-trip ~70–150ms. relationJoins gộp include lồng nhau thành một câu SQL
+  // (LATERAL + JSON) thay vì mỗi quan hệ một query riêng.
+  previewFeatures = ["relationJoins"]
 }
 
 datasource db {
