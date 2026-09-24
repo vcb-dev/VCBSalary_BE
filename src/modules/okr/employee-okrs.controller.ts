@@ -18,6 +18,7 @@ import {
   LeaderRejectOkrDto,
   OverrideEmployeeOkrDto,
   UpdateEmployeeOkrDto,
+  UpdateEmployeeOkrRewardDto,
 } from './dto/employee-okr.dto';
 import { EmployeeOkrsService } from './employee-okrs.service';
 
@@ -64,6 +65,16 @@ export class EmployeeOkrsController {
     @Body() dto: UpdateEmployeeOkrDto,
   ) {
     return this.employeeOkrsService.update(user.id, id, dto);
+  }
+
+  @RequirePermission('kpi_reward_rate.manage')
+  @Patch('employee-okrs/:id/reward')
+  updateReward(
+    @CurrentUser() user: AuthUserPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateEmployeeOkrRewardDto,
+  ) {
+    return this.employeeOkrsService.updateReward(user.id, id, dto);
   }
 
   // Xóa OKR tạo nhầm khi còn DRAFT — dùng lại quyền `okr.create` (đối xứng với việc tạo), service

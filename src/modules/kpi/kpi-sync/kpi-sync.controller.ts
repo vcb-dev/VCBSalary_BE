@@ -29,13 +29,26 @@ export class KpiSyncController {
 
   @RequirePermission('sync.view')
   @Get()
-  list(@Query() query: PaginationQueryDto) {
-    return this.service.list(query);
+  list(
+    @CurrentUser() user: AuthUserPayload,
+    @Query() query: PaginationQueryDto,
+  ) {
+    return this.service.list(query, user.id);
+  }
+
+  // Khai báo trước ':id' để "teams" không bị ParseUUIDPipe bắt nhầm.
+  @RequirePermission('sync.trigger')
+  @Get('teams')
+  listSyncableTeams(@CurrentUser() user: AuthUserPayload) {
+    return this.service.listSyncableTeams(user.id);
   }
 
   @RequirePermission('sync.view')
   @Get(':id')
-  get(@Param('id', ParseUUIDPipe) id: string) {
-    return this.service.get(id);
+  get(
+    @CurrentUser() user: AuthUserPayload,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.service.get(id, user.id);
   }
 }

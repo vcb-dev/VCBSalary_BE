@@ -56,8 +56,45 @@ export interface AutomationGenVideoKpiResponse {
   warnings: AutomationGenVideoKpiWarning[];
 }
 
+export type AutomationGenVideoPerformanceGoalRecord = {
+  external_item_id: string;
+  revision: number;
+  employee_id: string | null;
+  user_id: string;
+  team_id: string;
+  month: string;
+  item_type: 'KPI' | 'OKR';
+  kpi_group_id: string | null;
+  kpi_group_code: string | null;
+  kpi_group_name: string | null;
+  title: string;
+  description: string | null;
+  metric_type: 'NUMBER' | 'PERCENT' | 'BOOLEAN';
+  unit: string | null;
+  direction: 'AT_LEAST' | 'AT_MOST';
+  target: number;
+  actual_system: number | null;
+  actual_manual: number | null;
+  actual_final: number | null;
+  progress_pct: number | null;
+  progress_pct_for_overall: number | null;
+  pass_threshold_pct: number;
+  passed: boolean;
+  actual_source: 'MANUAL_IN_AGV' | 'SYSTEM_IN_AGV' | 'MISSING';
+  updated_at: string;
+};
+
+export interface AutomationGenVideoPerformanceGoalResponse {
+  contract_version: string;
+  month: string;
+  team: { id: string; name: string };
+  generated_at: string;
+  records: AutomationGenVideoPerformanceGoalRecord[];
+  warnings: AutomationGenVideoKpiWarning[];
+}
+
 /**
- * Gọi endpoint `GET /api/task-auto/teams/:id/payroll-sync` bên AutomationGenVideo_BE (xác thực
+ * Gọi các endpoint payroll-sync bên AutomationGenVideo_BE (xác thực
  * bằng API key, xem `docs cấu hình` — cần tạo key qua `POST /api/api-keys` bên đó trước).
  */
 @Injectable()
@@ -156,6 +193,37 @@ export class AutomationGenVideoClient {
     }
 
     return (await response.json()) as AutomationGenVideoKpiResponse;
+  }
+
+  async fetchPerformanceGoalsForPayrollSync(
+    externalTeamId: string,
+    month: string,
+  ): Promise<AutomationGenVideoPerformanceGoalResponse> {
+    const { baseUrl, apiKey } = this.getConnectionConfig();
+    const response = await fetch(
+      `${baseUrl}/api/task-auto/teams/${externalTeamId}/performance-goals/payroll-sync?month=${encodeURIComponent(month)}`,
+      {
+        headers: { 'x-api-key': apiKey },
+        signal: AbortSignal.timeout(30_000),
+      },
+    );
+
+    if (response.status === 404) {
+      throw new AppException(
+        ErrorCode.NOT_FOUND,
+        'Không tìm thấy team bên VCBI',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+    if (!response.ok) {
+      throw new AppException(
+        ErrorCode.INTERNAL_ERROR,
+        `VCBI trả lỗi khi lấy KPI/OKR linh hoạt (HTTP ${response.status})`,
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
+
+    return (await response.json()) as AutomationGenVideoPerformanceGoalResponse;
   }
 
   private getConnectionConfig() {

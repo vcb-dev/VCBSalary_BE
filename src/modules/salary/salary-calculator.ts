@@ -15,12 +15,18 @@ export function capAtTarget(actual: Prisma.Decimal, target: Prisma.Decimal) {
 }
 
 export function calculateProgressPercent(
-  actuals: Array<{ actual: Prisma.Decimal; target: Prisma.Decimal }>,
+  actuals: Array<{
+    actual: Prisma.Decimal;
+    target: Prisma.Decimal;
+    direction?: 'AT_LEAST' | 'AT_MOST';
+  }>,
 ) {
   const totals = actuals.reduce(
     (result, item) => ({
       cappedActual: result.cappedActual.plus(
-        capAtTarget(item.actual, item.target),
+        item.direction === 'AT_MOST'
+          ? equivalentActualForAtMost(item.actual, item.target)
+          : capAtTarget(item.actual, item.target),
       ),
       target: result.target.plus(item.target),
     }),
@@ -33,11 +39,33 @@ export function calculateProgressPercent(
     .toDecimalPlaces(4);
 }
 
+function equivalentActualForAtMost(
+  actual: Prisma.Decimal,
+  target: Prisma.Decimal,
+) {
+  if (target.lte(0)) return ZERO;
+  if (actual.lte(target)) return target;
+  return target.mul(target).div(actual);
+}
+
 export function calculateOkrProgressPercent(
   actual: Prisma.Decimal,
   target: Prisma.Decimal,
 ) {
   return calculateProgressPercent([{ actual, target }]);
+}
+
+export function calculatePerformanceGoalProgressPercent(
+  actual: Prisma.Decimal,
+  target: Prisma.Decimal,
+  direction: 'AT_LEAST' | 'AT_MOST',
+) {
+  if (target.lte(0)) return ZERO;
+  if (direction === 'AT_MOST') {
+    if (actual.lte(target)) return ONE_HUNDRED;
+    return target.div(actual).mul(ONE_HUNDRED).toDecimalPlaces(4);
+  }
+  return calculateOkrProgressPercent(actual, target);
 }
 
 export function resolveRevenueBracket<T extends BracketInput>(

@@ -1,4 +1,8 @@
-import type { Prisma, SalaryRecordStatus } from '@prisma/client';
+import type {
+  PerformanceGoalType,
+  Prisma,
+  SalaryRecordStatus,
+} from '@prisma/client';
 
 export type SalaryWarning = {
   code: string;
@@ -21,6 +25,7 @@ export type CalculatedKpiItem = {
 
 export type CalculatedOkrItem = {
   employeeOkrId: number;
+  goalType: PerformanceGoalType;
   title: string;
   progressPercent: Prisma.Decimal;
   thresholdPercent: Prisma.Decimal;

@@ -19,7 +19,7 @@ import {
 import {
   calculateBinaryReward,
   calculateCommission,
-  calculateOkrProgressPercent,
+  calculatePerformanceGoalProgressPercent,
   calculateProgressPercent,
   calculateRpm,
   roundMoney,
@@ -722,6 +722,7 @@ export class SalaryService {
                       createMany: {
                         data: source.okrItems.map((item) => ({
                           employeeOkrId: item.employeeOkrId,
+                          goalTypeSnapshot: item.goalTypeSnapshot,
                           okrTitleSnapshot: item.okrTitleSnapshot,
                           progressPercent: item.progressPercent,
                           achievementThresholdPercentSnapshot:
@@ -847,6 +848,8 @@ export class SalaryService {
                 select: {
                   id: true,
                   name: true,
+                  direction: true,
+                  externalItemId: true,
                   periodTargets: {
                     where: { payrollPeriodId: periodId },
                     select: { targetValue: true },
@@ -865,6 +868,8 @@ export class SalaryService {
                       teamId: true,
                       actualValue: true,
                       overrideValue: true,
+                      requiresManualEntry: true,
+                      manualEnteredAt: true,
                       leaderReviewStatus: true,
                     },
                   },
@@ -884,14 +889,22 @@ export class SalaryService {
         select: { kpiGroupId: true, rewardAmount: true },
       }),
       db.employeeOkr.findMany({
-        where: { employeeId, payrollPeriodId: periodId },
+        where: {
+          employeeId,
+          payrollPeriodId: periodId,
+          goalType: 'OKR',
+          isActive: true,
+        },
         orderBy: { createdAt: 'asc' },
         select: {
           id: true,
+          goalType: true,
           title: true,
           targetValue: true,
           actualValue: true,
           overrideValue: true,
+          direction: true,
+          actualMissing: true,
           rewardAmount: true,
           selfConfirmationStatus: true,
           leaderReviewStatus: true,
@@ -1011,15 +1024,23 @@ export class SalaryService {
       const progressInputs: Array<{
         actual: Prisma.Decimal;
         target: Prisma.Decimal;
+        direction?: 'AT_LEAST' | 'AT_MOST';
       }> = [];
-      if (group.items.length === 0) {
+      const applicableItems = group.items.filter(
+        (item) =>
+          item.externalItemId == null ||
+          item.employeeTargets.some(
+            (target) => target.teamId === assignmentTeamId,
+          ),
+      );
+      if (applicableItems.length === 0) {
         warnings.push({
           code: 'KPI_ITEMS_MISSING',
           message: `Nhóm KPI “${group.name}” không có đầu mục đang hoạt động.`,
           context: { kpiGroupId: group.id },
         });
       }
-      for (const item of group.items) {
+      for (const item of applicableItems) {
         const employeeTarget = item.employeeTargets.find(
           (target) =>
             target.teamId == null || target.teamId === assignmentTeamId,
@@ -1040,13 +1061,19 @@ export class SalaryService {
           (candidate) =>
             candidate.teamId == null || candidate.teamId === assignmentTeamId,
         );
-        if (!actual) {
+        if (
+          !actual ||
+          (actual.requiresManualEntry && actual.manualEnteredAt == null)
+        ) {
           warnings.push({
             code: 'KPI_ACTUAL_MISSING',
             message: `Đầu mục KPI “${item.name}” chưa có dữ liệu thực tế.`,
             context: { kpiGroupId: group.id, kpiItemId: item.id },
           });
-          progressInputs.push({ actual: ZERO, target });
+          progressInputs.push({
+            actual: ZERO,
+            target,
+          });
           continue;
         }
         if (actual.leaderReviewStatus !== 'APPROVED') {
@@ -1059,6 +1086,7 @@ export class SalaryService {
         progressInputs.push({
           actual: actual.overrideValue ?? actual.actualValue,
           target,
+          direction: item.direction,
         });
       }
       const progressPercent = calculateProgressPercent(progressInputs);
@@ -1094,20 +1122,31 @@ export class SalaryService {
     });
 
     const okrItems: CalculatedOkrItem[] = okrs.map((okr) => {
+      const goalType = okr.goalType ?? 'OKR';
+      if (okr.actualMissing) {
+        warnings.push({
+          code: 'PERFORMANCE_GOAL_ACTUAL_MISSING',
+          message: `${goalType} “${okr.title}” chưa có số thực đạt từ VCBI.`,
+          context: { employeeOkrId: okr.id },
+        });
+      }
       if (
         okr.selfConfirmationStatus !== 'CONFIRMED' ||
         okr.leaderReviewStatus !== 'APPROVED'
       ) {
         warnings.push({
           code: 'OKR_NOT_APPROVED',
-          message: `OKR “${okr.title}” chưa hoàn tất xác nhận và duyệt.`,
+          message: `${goalType} “${okr.title}” chưa hoàn tất xác nhận và duyệt.`,
           context: { employeeOkrId: okr.id },
         });
       }
-      const progressPercent = calculateOkrProgressPercent(
-        okr.overrideValue ?? okr.actualValue,
-        okr.targetValue,
-      );
+      const progressPercent = okr.actualMissing
+        ? ZERO
+        : calculatePerformanceGoalProgressPercent(
+            okr.overrideValue ?? okr.actualValue,
+            okr.targetValue,
+            okr.direction,
+          );
       const earnedAmount = calculateBinaryReward(
         progressPercent,
         threshold,
@@ -1115,6 +1154,7 @@ export class SalaryService {
       );
       return {
         employeeOkrId: okr.id,
+        goalType,
         title: okr.title,
         progressPercent,
         thresholdPercent: threshold,
@@ -1172,12 +1212,16 @@ export class SalaryService {
     const rpmRate = bracket?.rpmRatePer1000Views ?? ZERO;
     const commissionAmount = calculateCommission(revenueAmount, commissionRate);
     const rpmRewardAmount = calculateRpm(totalViews, rpmRate);
-    const kpiRewardAmount = kpiItems.reduce(
-      (sum, item) => sum.plus(item.earnedAmount),
-      ZERO,
-    );
+    const kpiRewardAmount = kpiItems
+      .reduce((sum, item) => sum.plus(item.earnedAmount), ZERO)
+      .plus(
+        okrItems
+          .filter((item) => item.goalType === 'KPI')
+          .reduce((sum, item) => sum.plus(item.earnedAmount), ZERO),
+      );
     const okrRewardAmount = okrItems.reduce(
-      (sum, item) => sum.plus(item.earnedAmount),
+      (sum, item) =>
+        item.goalType === 'OKR' ? sum.plus(item.earnedAmount) : sum,
       ZERO,
     );
     const additionalComponentAmount =
@@ -1333,6 +1377,7 @@ export class SalaryService {
         data: calculation.okrItems.map((item) => ({
           salaryRecordId: recordId,
           employeeOkrId: item.employeeOkrId,
+          goalTypeSnapshot: item.goalType,
           okrTitleSnapshot: item.title,
           progressPercent: item.progressPercent,
           achievementThresholdPercentSnapshot: item.thresholdPercent,
@@ -1649,6 +1694,7 @@ export class SalaryService {
       okrItems: record.okrItems.map((item) => ({
         id: item.id,
         employeeOkrId: item.employeeOkrId,
+        goalType: item.goalTypeSnapshot,
         title: item.okrTitleSnapshot,
         progressPercent: item.progressPercent.toString(),
         thresholdPercent: item.achievementThresholdPercentSnapshot.toString(),

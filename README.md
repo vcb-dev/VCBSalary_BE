@@ -75,6 +75,24 @@ Rate limit đăng nhập hiện lưu trong bộ nhớ tiến trình. Khi chạy 
 
 Swagger chỉ có tại `/api/docs` khi `SWAGGER_ENABLED=true` (hoặc ở môi trường không phải production nếu biến này chưa được đặt).
 
+## Đồng bộ KPI/OKR từ AutomationGenVideo
+
+Cấu hình kết nối một chiều:
+
+```dotenv
+AUTOMATION_GEN_VIDEO_BASE_URL=http://localhost:3000
+AUTOMATION_GEN_VIDEO_API_KEY=agv_...
+```
+
+Một lượt `POST /api/kpi-sync-runs` lấy đồng thời KPI cố định, KPI linh hoạt theo nhóm và OKR của
+đúng team + tháng. KPI linh hoạt được upsert thành `KpiItem` bằng `external_item_id`, gắn vào
+`KpiGroup` theo `kpi_group_code` và có target/actual riêng của nhân sự. Vì vậy KPI thuộc nhóm
+`CONTENT` đi qua đúng luồng KPI Content bình thường: xác nhận, duyệt, tính tiến độ nhóm và mức
+thưởng nhóm. OKR vẫn được lưu riêng; target/actual và revision do AutomationGenVideo quản lý,
+còn `rewardAmount` được giữ tại VCB Salary và mặc định bằng `0`. Mục không còn xuất hiện trong
+snapshot nguồn sẽ được vô hiệu, không bị xóa khỏi lịch sử. Cả KPI và OKR dùng ngưỡng của ruleset
+kỳ lương và cơ chế thưởng nhị phân.
+
 ## Auth
 
 Login không trả JWT trong JSON. Backend dùng cookie:

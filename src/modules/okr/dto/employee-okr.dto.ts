@@ -50,6 +50,12 @@ export class UpdateEmployeeOkrDto {
   selfAssessment?: string;
 }
 
+export class UpdateEmployeeOkrRewardDto {
+  @IsString()
+  @Matches(MONEY_PATTERN)
+  rewardAmount: string;
+}
+
 export class LeaderRejectOkrDto {
   // Bắt buộc theo spec: "reject phải có reason".
   @IsString()

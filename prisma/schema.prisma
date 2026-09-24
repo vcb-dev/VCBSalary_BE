@@ -87,6 +87,22 @@ enum KpiDataSource {
   AUTOMATION_GEN_VIDEO
 }
 
+enum PerformanceGoalType {
+  KPI
+  OKR
+}
+
+enum PerformanceGoalDirection {
+  AT_LEAST
+  AT_MOST
+}
+
+enum PerformanceGoalMetricType {
+  NUMBER
+  PERCENT
+  BOOLEAN
+}
+
 // CANCELLED là hủy mềm để giữ lịch sử — dữ liệu nghiệp vụ không bao giờ xóa cứng.
 enum KpiAssignmentStatus {
   ASSIGNED
@@ -253,6 +269,7 @@ model Team {
   kpiAssignments            EmployeeKpiAssignment[]
   kpiTargets                EmployeeKpiTarget[]
   kpiActuals                EmployeeKpiActual[]
+  performanceGoals          EmployeeOkr[]
   kpiSyncItems              KpiSyncRunItem[]
   salaryKpiItems            SalaryRecordKpiItem[]
   scopedUserRoles           UserRole[]
@@ -763,15 +780,20 @@ model KpiGroup {
 // Định nghĩa cố định của một đầu mục; target không nằm ở đây mà ở KpiPeriodTarget vì target
 // thay đổi theo từng kỳ. `code` do hệ thống sinh và bất biến sau khi tạo.
 model KpiItem {
-  id         Int      @id @default(autoincrement())
-  kpiGroupId Int      @map("kpi_group_id")
-  code       String   @db.VarChar(80)
-  name       String   @db.VarChar(200)
-  unit       String   @db.VarChar(50)
-  sortOrder  Int      @default(0) @map("sort_order")
-  isActive   Boolean  @default(true) @map("is_active")
-  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz()
-  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+  id               Int                       @id @default(autoincrement())
+  kpiGroupId       Int                       @map("kpi_group_id")
+  code             String                    @db.VarChar(80)
+  name             String                    @db.VarChar(200)
+  unit             String                    @db.VarChar(50)
+  sortOrder        Int                       @default(0) @map("sort_order")
+  isActive         Boolean                   @default(true) @map("is_active")
+  metricType       PerformanceGoalMetricType @default(NUMBER) @map("metric_type")
+  direction        PerformanceGoalDirection  @default(AT_LEAST)
+  externalItemId   String?                   @unique @map("external_item_id") @db.Uuid
+  externalRevision Int?                      @map("external_revision")
+  sourceUpdatedAt  DateTime?                 @map("source_updated_at") @db.Timestamptz()
+  createdAt        DateTime                  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt        DateTime                  @updatedAt @map("updated_at") @db.Timestamptz()
 
   kpiGroup        KpiGroup            @relation(fields: [kpiGroupId], references: [id])
   periodTargets   KpiPeriodTarget[]
@@ -946,6 +968,7 @@ model KpiSyncRunItem {
   kpiItemId            Int?              @map("kpi_item_id")
   employeeKpiTargetId  Int?              @map("employee_kpi_target_id")
   employeeKpiActualId  Int?              @map("employee_kpi_actual_id")
+  employeeOkrId        Int?              @map("employee_okr_id")
   groupCode            String            @map("group_code") @db.VarChar(80)
   metricCode           String            @map("metric_code") @db.VarChar(80)
   recordKind           KpiSyncRecordKind @map("record_kind")
@@ -964,11 +987,13 @@ model KpiSyncRunItem {
   kpiItem           KpiItem?           @relation(fields: [kpiItemId], references: [id])
   employeeKpiTarget EmployeeKpiTarget? @relation(fields: [employeeKpiTargetId], references: [id])
   employeeKpiActual EmployeeKpiActual? @relation(fields: [employeeKpiActualId], references: [id])
+  employeeOkr       EmployeeOkr?       @relation(fields: [employeeOkrId], references: [id], onDelete: SetNull)
 
   @@index([kpiSyncRunId, resultStatus, id])
   @@index([employeeId, resultStatus, id(sort: Desc)], map: "kpi_sync_run_items_employee_status_id_idx")
   // Cần cho ON DELETE SET NULL khi xóa KPI item chưa phát sinh dữ liệu nghiệp vụ.
   @@index([kpiItemId])
+  @@index([employeeOkrId])
   @@index([teamId, employeeId])
   @@map("kpi_sync_run_items")
 }
@@ -977,36 +1002,50 @@ model KpiSyncRunItem {
 // nhân sự chỉ tự cập nhật actualValue/selfAssessment khi còn DRAFT.
 // progress = MIN(actual/target, 100%) tính động ở API, không lưu cột riêng.
 model EmployeeOkr {
-  id                     Int                    @id @default(autoincrement())
-  employeeId             Int                    @map("employee_id")
-  payrollPeriodId        Int                    @map("payroll_period_id")
-  title                  String                 @db.VarChar(250)
+  id                     Int                       @id @default(autoincrement())
+  employeeId             Int                       @map("employee_id")
+  payrollPeriodId        Int                       @map("payroll_period_id")
+  teamId                 Int?                      @map("team_id")
+  goalType               PerformanceGoalType       @default(OKR) @map("goal_type")
+  title                  String                    @db.VarChar(250)
   description            String?
-  unit                   String?                @db.VarChar(50)
-  targetValue            Decimal                @map("target_value") @db.Decimal(18, 4)
-  actualValue            Decimal                @default(0) @map("actual_value") @db.Decimal(18, 4)
-  overrideValue          Decimal?               @map("override_value") @db.Decimal(18, 4)
-  overrideReason         String?                @map("override_reason")
-  rewardAmount           Decimal                @map("reward_amount") @db.Decimal(18, 0)
-  deadline               DateTime?              @db.Date
-  selfAssessment         String?                @map("self_assessment")
-  selfConfirmationStatus SelfConfirmationStatus @default(DRAFT) @map("self_confirmation_status")
-  selfConfirmedByUserId  String?                @map("self_confirmed_by_user_id") @db.Uuid
-  selfConfirmedAt        DateTime?              @map("self_confirmed_at") @db.Timestamptz()
-  leaderReviewStatus     LeaderReviewStatus     @default(PENDING) @map("leader_review_status")
-  leaderReviewedByUserId String?                @map("leader_reviewed_by_user_id") @db.Uuid
-  leaderReviewedAt       DateTime?              @map("leader_reviewed_at") @db.Timestamptz()
-  leaderRejectionReason  String?                @map("leader_rejection_reason")
-  createdAt              DateTime               @default(now()) @map("created_at") @db.Timestamptz()
-  updatedAt              DateTime               @updatedAt @map("updated_at") @db.Timestamptz()
+  unit                   String?                   @db.VarChar(50)
+  metricType             PerformanceGoalMetricType @default(NUMBER) @map("metric_type")
+  direction              PerformanceGoalDirection  @default(AT_LEAST)
+  targetValue            Decimal                   @map("target_value") @db.Decimal(18, 4)
+  actualValue            Decimal                   @default(0) @map("actual_value") @db.Decimal(18, 4)
+  actualMissing          Boolean                   @default(false) @map("actual_missing")
+  overrideValue          Decimal?                  @map("override_value") @db.Decimal(18, 4)
+  overrideReason         String?                   @map("override_reason")
+  rewardAmount           Decimal                   @map("reward_amount") @db.Decimal(18, 0)
+  dataSource             KpiValueDataSource        @default(MANUAL) @map("data_source")
+  externalItemId         String?                   @unique @map("external_item_id") @db.Uuid
+  externalRevision       Int?                      @map("external_revision")
+  sourceUpdatedAt        DateTime?                 @map("source_updated_at") @db.Timestamptz()
+  syncedAt               DateTime?                 @map("synced_at") @db.Timestamptz()
+  isActive               Boolean                   @default(true) @map("is_active")
+  deadline               DateTime?                 @db.Date
+  selfAssessment         String?                   @map("self_assessment")
+  selfConfirmationStatus SelfConfirmationStatus    @default(DRAFT) @map("self_confirmation_status")
+  selfConfirmedByUserId  String?                   @map("self_confirmed_by_user_id") @db.Uuid
+  selfConfirmedAt        DateTime?                 @map("self_confirmed_at") @db.Timestamptz()
+  leaderReviewStatus     LeaderReviewStatus        @default(PENDING) @map("leader_review_status")
+  leaderReviewedByUserId String?                   @map("leader_reviewed_by_user_id") @db.Uuid
+  leaderReviewedAt       DateTime?                 @map("leader_reviewed_at") @db.Timestamptz()
+  leaderRejectionReason  String?                   @map("leader_rejection_reason")
+  createdAt              DateTime                  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt              DateTime                  @updatedAt @map("updated_at") @db.Timestamptz()
 
   employee         Employee              @relation(fields: [employeeId], references: [id])
   payrollPeriod    PayrollPeriod         @relation(fields: [payrollPeriodId], references: [id])
+  team             Team?                 @relation(fields: [teamId], references: [id], onDelete: SetNull)
   selfConfirmedBy  User?                 @relation("OkrSelfConfirmedBy", fields: [selfConfirmedByUserId], references: [id])
   leaderReviewedBy User?                 @relation("OkrLeaderReviewedBy", fields: [leaderReviewedByUserId], references: [id])
   salaryItems      SalaryRecordOkrItem[]
+  syncItems        KpiSyncRunItem[]
 
   @@index([employeeId, payrollPeriodId, createdAt])
+  @@index([teamId, payrollPeriodId, isActive])
   @@map("employee_okrs")
 }
 
@@ -1116,16 +1155,17 @@ model SalaryRecordKpiItem {
 }
 
 model SalaryRecordOkrItem {
-  id                                  Int      @id @default(autoincrement())
-  salaryRecordId                      Int      @map("salary_record_id")
-  employeeOkrId                       Int      @map("employee_okr_id")
-  okrTitleSnapshot                    String   @map("okr_title_snapshot") @db.VarChar(250)
-  progressPercent                     Decimal  @map("progress_percent") @db.Decimal(7, 4)
-  achievementThresholdPercentSnapshot Decimal  @map("achievement_threshold_percent_snapshot") @db.Decimal(5, 2)
-  rewardAmountSnapshot                Decimal  @map("reward_amount_snapshot") @db.Decimal(18, 0)
-  isAchieved                          Boolean  @map("is_achieved")
-  earnedAmount                        Decimal  @map("earned_amount") @db.Decimal(18, 0)
-  createdAt                           DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  id                                  Int                 @id @default(autoincrement())
+  salaryRecordId                      Int                 @map("salary_record_id")
+  employeeOkrId                       Int                 @map("employee_okr_id")
+  goalTypeSnapshot                    PerformanceGoalType @default(OKR) @map("goal_type_snapshot")
+  okrTitleSnapshot                    String              @map("okr_title_snapshot") @db.VarChar(250)
+  progressPercent                     Decimal             @map("progress_percent") @db.Decimal(7, 4)
+  achievementThresholdPercentSnapshot Decimal             @map("achievement_threshold_percent_snapshot") @db.Decimal(5, 2)
+  rewardAmountSnapshot                Decimal             @map("reward_amount_snapshot") @db.Decimal(18, 0)
+  isAchieved                          Boolean             @map("is_achieved")
+  earnedAmount                        Decimal             @map("earned_amount") @db.Decimal(18, 0)
+  createdAt                           DateTime            @default(now()) @map("created_at") @db.Timestamptz()
 
   salaryRecord SalaryRecord @relation(fields: [salaryRecordId], references: [id], onDelete: Cascade)
   employeeOkr  EmployeeOkr  @relation(fields: [employeeOkrId], references: [id])

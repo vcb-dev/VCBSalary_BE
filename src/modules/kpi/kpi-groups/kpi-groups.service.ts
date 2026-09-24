@@ -269,6 +269,13 @@ export class KpiGroupsService {
 
   async updateItem(id: number, dto: UpdateKpiItemDto, actorUserId: string) {
     const existing = await this.getItemOrThrow(id);
+    if (existing.externalItemId) {
+      throw new AppException(
+        ErrorCode.VALIDATION_ERROR,
+        'Đầu mục này được quản lý tại VCBI; chỉ target/actual điều chỉnh của nhân sự được sửa tại hệ thống lương',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
     await this.assertCanConfigureTeams(
       actorUserId,
       (existing.kpiGroup?.teams ?? []).map((team) => team.id),

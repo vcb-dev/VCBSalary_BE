@@ -82,7 +82,12 @@ export class KpiAssignmentsService {
 
     const group = await this.prisma.kpiGroup.findUnique({
       where: { id: dto.kpiGroupId },
-      include: { teams: true, items: { where: { isActive: true } } },
+      include: {
+        teams: true,
+        // Đầu mục có externalItemId là KPI riêng của một nhân sự từ AGV; sync tự tạo actual đúng
+        // chủ sở hữu, không nhân bản sang mọi người khi gán nhóm thủ công.
+        items: { where: { isActive: true, externalItemId: null } },
+      },
     });
     if (!group) {
       throw new AppException(

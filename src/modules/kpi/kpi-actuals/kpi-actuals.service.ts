@@ -88,12 +88,14 @@ export class KpiActualsService {
     if (allItemIds.length > 0) {
       await this.prisma.employeeKpiActual.createMany({
         data: assignments.flatMap((assignment) =>
-          assignment.kpiGroup.items.map((item) => ({
-            employeeId,
-            teamId: assignment.teamId,
-            kpiItemId: item.id,
-            payrollPeriodId: periodId,
-          })),
+          assignment.kpiGroup.items
+            .filter((item) => item.externalItemId == null)
+            .map((item) => ({
+              employeeId,
+              teamId: assignment.teamId,
+              kpiItemId: item.id,
+              payrollPeriodId: periodId,
+            })),
         ),
         skipDuplicates: true,
       });
@@ -137,68 +139,85 @@ export class KpiActualsService {
 
     const groups = assignments.map((assignment) => {
       const assignmentTeamId = assignment.teamId ?? 0;
-      const items = assignment.kpiGroup.items.map((item) => {
-        const actual = actualByItemId.get(
-          teamItemKey(assignmentTeamId, item.id),
-        );
-        // Ưu tiên target leader đặt riêng cho nhân sự; nếu chưa có thì dùng target mặc định kỳ.
-        const employeeTarget = employeeTargetByItemId.get(
-          teamItemKey(assignmentTeamId, item.id),
-        );
-        const target = employeeTarget ?? periodTargetByItemId.get(item.id);
-        const effectiveTarget =
-          employeeTarget?.overrideValue ?? target?.targetValue ?? null;
-        const targetValueNumber = effectiveTarget?.toNumber() ?? null;
-        const actualValueNumber = actual ? actual.actualValue.toNumber() : 0;
-        const overrideValueNumber =
-          actual?.overrideValue != null
-            ? actual.overrideValue.toNumber()
-            : null;
-        // effective_actual = override_value ?? actual_value (đúng công thức spec M07).
-        const effectiveActualValue = overrideValueNumber ?? actualValueNumber;
-        // capped_actual = MIN(effective_actual, target) — không giới hạn nếu chưa có target.
-        const cappedActualValue =
-          targetValueNumber != null
-            ? Math.min(effectiveActualValue, targetValueNumber)
-            : effectiveActualValue;
+      const items = assignment.kpiGroup.items
+        .filter(
+          (item) =>
+            item.externalItemId == null ||
+            employeeTargetByItemId.has(teamItemKey(assignmentTeamId, item.id)),
+        )
+        .map((item) => {
+          const actual = actualByItemId.get(
+            teamItemKey(assignmentTeamId, item.id),
+          );
+          // Ưu tiên target leader đặt riêng cho nhân sự; nếu chưa có thì dùng target mặc định kỳ.
+          const employeeTarget = employeeTargetByItemId.get(
+            teamItemKey(assignmentTeamId, item.id),
+          );
+          const target = employeeTarget ?? periodTargetByItemId.get(item.id);
+          const effectiveTarget =
+            employeeTarget?.overrideValue ?? target?.targetValue ?? null;
+          const targetValueNumber = effectiveTarget?.toNumber() ?? null;
+          const actualValueNumber = actual ? actual.actualValue.toNumber() : 0;
+          const overrideValueNumber =
+            actual?.overrideValue != null
+              ? actual.overrideValue.toNumber()
+              : null;
+          // effective_actual = override_value ?? actual_value (đúng công thức spec M07).
+          const effectiveActualValue = overrideValueNumber ?? actualValueNumber;
+          const isActualMissing =
+            !actual ||
+            (actual.requiresManualEntry && actual.manualEnteredAt == null);
+          // Với KPI AT_MOST, giá trị 0 chỉ được coi là đạt khi nguồn thực sự trả về 0.
+          const cappedActualValue = isActualMissing
+            ? 0
+            : targetValueNumber == null
+              ? effectiveActualValue
+              : item.direction === 'AT_MOST'
+                ? effectiveActualValue <= targetValueNumber
+                  ? targetValueNumber
+                  : (targetValueNumber * targetValueNumber) /
+                    effectiveActualValue
+                : Math.min(effectiveActualValue, targetValueNumber);
 
-        return {
-          actualId: actual?.id ?? null,
-          kpiItemId: item.id,
-          kpiItemCode: item.code,
-          kpiItemName: item.name,
-          kpiItemUnit: item.unit,
-          // targetValue/actualValue/overrideValue: Decimal Prisma — serialize thành string trong
-          // JSON (không phải number), khớp quy ước đã áp dụng cho toàn hệ thống.
-          targetValue: effectiveTarget,
-          targetOriginalValue: target?.targetValue ?? null,
-          targetOverrideValue: employeeTarget?.overrideValue ?? null,
-          targetOverrideReason: employeeTarget?.overrideReason ?? null,
-          targetSource: employeeTarget
-            ? 'EMPLOYEE'
-            : target
-              ? 'PERIOD'
-              : 'NONE',
-          targetDataSource: employeeTarget?.dataSource ?? null,
-          targetSyncedAt: employeeTarget?.syncedAt ?? null,
-          actualValue: actual?.actualValue ?? null,
-          dataSource: actual?.dataSource ?? 'MANUAL',
-          syncedAt: actual?.syncedAt ?? null,
-          requiresManualEntry: actual?.requiresManualEntry ?? false,
-          manualEnteredAt: actual?.manualEnteredAt ?? null,
-          syncMessage: actual?.syncMessage ?? null,
-          overrideValue: actual?.overrideValue ?? null,
-          overrideReason: actual?.overrideReason ?? null,
-          // effectiveActualValue/cappedActualValue: giá trị TÍNH TOÁN — number thật, không phải
-          // Decimal, nên là number (không phải string) trong JSON.
-          effectiveActualValue,
-          cappedActualValue,
-          selfAssessment: actual?.selfAssessment ?? null,
-          selfConfirmationStatus: actual?.selfConfirmationStatus ?? 'DRAFT',
-          leaderReviewStatus: actual?.leaderReviewStatus ?? 'PENDING',
-          leaderRejectionReason: actual?.leaderRejectionReason ?? null,
-        };
-      });
+          return {
+            actualId: actual?.id ?? null,
+            kpiItemId: item.id,
+            kpiItemCode: item.code,
+            kpiItemName: item.name,
+            kpiItemUnit: item.unit,
+            direction: item.direction,
+            externalItemId: item.externalItemId,
+            // targetValue/actualValue/overrideValue: Decimal Prisma — serialize thành string trong
+            // JSON (không phải number), khớp quy ước đã áp dụng cho toàn hệ thống.
+            targetValue: effectiveTarget,
+            targetOriginalValue: target?.targetValue ?? null,
+            targetOverrideValue: employeeTarget?.overrideValue ?? null,
+            targetOverrideReason: employeeTarget?.overrideReason ?? null,
+            targetSource: employeeTarget
+              ? 'EMPLOYEE'
+              : target
+                ? 'PERIOD'
+                : 'NONE',
+            targetDataSource: employeeTarget?.dataSource ?? null,
+            targetSyncedAt: employeeTarget?.syncedAt ?? null,
+            actualValue: actual?.actualValue ?? null,
+            dataSource: actual?.dataSource ?? 'MANUAL',
+            syncedAt: actual?.syncedAt ?? null,
+            requiresManualEntry: actual?.requiresManualEntry ?? false,
+            manualEnteredAt: actual?.manualEnteredAt ?? null,
+            syncMessage: actual?.syncMessage ?? null,
+            overrideValue: actual?.overrideValue ?? null,
+            overrideReason: actual?.overrideReason ?? null,
+            // effectiveActualValue/cappedActualValue: giá trị TÍNH TOÁN — number thật, không phải
+            // Decimal, nên là number (không phải string) trong JSON.
+            effectiveActualValue,
+            cappedActualValue,
+            selfAssessment: actual?.selfAssessment ?? null,
+            selfConfirmationStatus: actual?.selfConfirmationStatus ?? 'DRAFT',
+            leaderReviewStatus: actual?.leaderReviewStatus ?? 'PENDING',
+            leaderRejectionReason: actual?.leaderRejectionReason ?? null,
+          };
+        });
 
       const sumTarget = items.reduce(
         (sum, i) => sum + (i.targetValue ? i.targetValue.toNumber() : 0),

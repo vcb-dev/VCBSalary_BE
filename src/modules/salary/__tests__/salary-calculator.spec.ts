@@ -3,6 +3,7 @@ import {
   calculateBinaryReward,
   calculateCommission,
   calculateProgressPercent,
+  calculatePerformanceGoalProgressPercent,
   calculateRpm,
   resolveRevenueBracket,
 } from '../salary-calculator';
@@ -34,6 +35,35 @@ describe('salary calculator policies', () => {
         decimal(2_000_000),
       ).toFixed(0),
     ).toBe('0');
+  });
+
+  it('calculates AT_MOST goals in the correct direction', () => {
+    expect(
+      calculatePerformanceGoalProgressPercent(
+        decimal(8),
+        decimal(10),
+        'AT_MOST',
+      ).toString(),
+    ).toBe('100');
+    expect(
+      calculatePerformanceGoalProgressPercent(
+        decimal(20),
+        decimal(10),
+        'AT_MOST',
+      ).toString(),
+    ).toBe('50');
+  });
+
+  it('treats an AT_MOST grouped KPI as a normal KPI contribution', () => {
+    expect(
+      calculateProgressPercent([
+        {
+          target: decimal(10),
+          actual: decimal(12),
+          direction: 'AT_MOST',
+        },
+      ]).toFixed(4),
+    ).toBe('83.3333');
   });
 
   it('matches revenue brackets using inclusive min and exclusive max boundaries', () => {

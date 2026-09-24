@@ -362,6 +362,101 @@ describe('KpiActualsService', () => {
 
       expect(profile.groups[0].items[0].effectiveActualValue).toBe(9);
     });
+
+    it('calculates an AT_MOST item in a normal KPI group', async () => {
+      const prisma = makePrismaMock();
+      prisma.employeeKpiAssignment.findMany.mockResolvedValue([
+        {
+          id: 'a1',
+          kpiGroup: {
+            id: 'g1',
+            code: 'CONTENT',
+            name: 'Content',
+            items: [
+              {
+                id: 'item-1',
+                code: 'ERROR_RATE',
+                name: 'Tỷ lệ lỗi',
+                unit: '%',
+                direction: 'AT_MOST',
+              },
+            ],
+          },
+        },
+      ]);
+      prisma.employeeKpiActual.findMany.mockResolvedValue([
+        {
+          id: 'act-1',
+          kpiItemId: 'item-1',
+          actualValue: decimal(12),
+          overrideValue: null,
+          requiresManualEntry: false,
+          manualEnteredAt: null,
+        },
+      ]);
+      prisma.kpiPeriodTarget.findMany.mockResolvedValue([
+        { kpiItemId: 'item-1', targetValue: decimal(10) },
+      ]);
+      const service = new KpiActualsService(
+        prisma as never,
+        makeAuthorizationMock() as never,
+        makeAuditLogMock() as never,
+      );
+
+      const profile = await service.getProfile('user-admin', 'p1', 'e1');
+
+      expect(profile.groups[0].items[0].cappedActualValue).toBeCloseTo(
+        8.3333,
+        4,
+      );
+      expect(profile.groups[0].progressPercent).toBeCloseTo(83.3333, 4);
+    });
+
+    it('does not count a missing AT_MOST actual as completed', async () => {
+      const prisma = makePrismaMock();
+      prisma.employeeKpiAssignment.findMany.mockResolvedValue([
+        {
+          id: 'a1',
+          kpiGroup: {
+            id: 'g1',
+            code: 'CONTENT',
+            name: 'Content',
+            items: [
+              {
+                id: 'item-1',
+                code: 'ERROR_RATE',
+                name: 'Tỷ lệ lỗi',
+                unit: '%',
+                direction: 'AT_MOST',
+              },
+            ],
+          },
+        },
+      ]);
+      prisma.employeeKpiActual.findMany.mockResolvedValue([
+        {
+          id: 'act-1',
+          kpiItemId: 'item-1',
+          actualValue: decimal(0),
+          overrideValue: null,
+          requiresManualEntry: true,
+          manualEnteredAt: null,
+        },
+      ]);
+      prisma.kpiPeriodTarget.findMany.mockResolvedValue([
+        { kpiItemId: 'item-1', targetValue: decimal(10) },
+      ]);
+      const service = new KpiActualsService(
+        prisma as never,
+        makeAuthorizationMock() as never,
+        makeAuditLogMock() as never,
+      );
+
+      const profile = await service.getProfile('user-admin', 'p1', 'e1');
+
+      expect(profile.groups[0].items[0].cappedActualValue).toBe(0);
+      expect(profile.groups[0].progressPercent).toBe(0);
+    });
   });
 
   describe('getProfile — scope', () => {

@@ -16,6 +16,7 @@ import type {
   LeaderRejectOkrDto,
   OverrideEmployeeOkrDto,
   UpdateEmployeeOkrDto,
+  UpdateEmployeeOkrRewardDto,
 } from './dto/employee-okr.dto';
 
 @Injectable()
@@ -36,7 +37,12 @@ export class EmployeeOkrsService {
     await this.assertVisible(userId, periodId, employeeId);
 
     const okrs = await this.prisma.employeeOkr.findMany({
-      where: { employeeId, payrollPeriodId: periodId },
+      where: {
+        employeeId,
+        payrollPeriodId: periodId,
+        goalType: 'OKR',
+        isActive: true,
+      },
       orderBy: { createdAt: 'asc' },
     });
 
@@ -118,6 +124,13 @@ export class EmployeeOkrsService {
     assertPeriodOpenOrInReview(period, 'sửa OKR');
     await this.assertOwnOkr(userId, okr);
     this.assertDraftEditable(okr);
+    if (okr.dataSource === 'AUTOMATION_GEN_VIDEO') {
+      throw new AppException(
+        ErrorCode.VALIDATION_ERROR,
+        'Kết quả gốc được đồng bộ từ VCBI; Leader/Admin có thể điều chỉnh khi duyệt',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
 
     return this.prisma.$transaction(async (tx) => {
       const claimed = await tx.employeeOkr.updateMany({
@@ -172,6 +185,13 @@ export class EmployeeOkrsService {
     this.assertPeriodEditable(period);
     assertPeriodOpenForDataEntry(period, 'xoá OKR');
     this.assertDraftEditable(okr);
+    if (okr.dataSource === 'AUTOMATION_GEN_VIDEO') {
+      throw new AppException(
+        ErrorCode.VALIDATION_ERROR,
+        'Không thể xóa mục tiêu đồng bộ; hãy lưu trữ mục tiêu tại VCBI rồi đồng bộ lại',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
 
     const scope = await this.authorization.resolvePermissionScope(
       userId,
@@ -227,6 +247,13 @@ export class EmployeeOkrsService {
     assertPeriodInReview(period, 'tự xác nhận OKR');
     await this.assertOwnOkr(userId, okr);
     this.assertDraftEditable(okr);
+    if (okr.actualMissing) {
+      throw new AppException(
+        ErrorCode.VALIDATION_ERROR,
+        'Mục tiêu chưa có số thực đạt từ VCBI',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
 
     return this.prisma.$transaction(async (tx) => {
       const claimed = await tx.employeeOkr.updateMany({
@@ -384,11 +411,46 @@ export class EmployeeOkrsService {
     });
   }
 
+  async updateReward(
+    userId: string,
+    id: number,
+    dto: UpdateEmployeeOkrRewardDto,
+  ) {
+    const goal = await this.getOrThrow(id);
+    const period = await this.assertPeriodExists(goal.payrollPeriodId);
+    this.assertPeriodEditable(period);
+    const before = goal.rewardAmount;
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.employeeOkr.update({
+        where: { id },
+        data: { rewardAmount: dto.rewardAmount },
+      });
+      await this.auditLog.record(tx, {
+        actorUserId: userId,
+        action: 'PERFORMANCE_GOAL_REWARD_UPDATED',
+        entityType: 'EmployeeOkr',
+        entityId: id,
+        targetEmployeeId: goal.employeeId,
+        payrollPeriodId: goal.payrollPeriodId,
+        beforeData: { rewardAmount: before.toFixed(0) },
+        afterData: { rewardAmount: dto.rewardAmount },
+      });
+      return {
+        ...updated,
+        progressPercent: this.computeProgressPercent(updated),
+      };
+    });
+  }
+
   private computeProgressPercent(okr: EmployeeOkr): number {
     const target = okr.targetValue.toNumber();
     const actual = (okr.overrideValue ?? okr.actualValue).toNumber();
-    if (target <= 0) return 0;
-    return Math.min(actual / target, 1) * 100;
+    if (target <= 0 || okr.actualMissing) return 0;
+    if (okr.direction === 'AT_MOST') {
+      if (actual <= target) return 100;
+      return Math.min(target / actual, 1) * 100;
+    }
+    return Math.min(Math.max(actual, 0) / target, 1) * 100;
   }
 
   private async assertVisible(
