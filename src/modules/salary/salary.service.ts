@@ -122,6 +122,8 @@ export class SalaryService {
     // Đọc toàn bộ input và ghi snapshot trong cùng một transaction nhất quán. Quan trọng hơn,
     // persistCalculation chỉ claim record khi nó vẫn còn PENDING/WARNING, nên một request tính
     // lại không thể ghi đè hoặc "mở khóa" record vừa được Manager duyệt đồng thời.
+    // Trong interactive transaction mọi query chạy tuần tự trên một connection (Promise.all không
+    // song song): ~20 round-trip tới Singapore mất 4–8s, vượt timeout mặc định 5s của Prisma.
     try {
       return await this.prisma.$transaction(
         async (tx) => {
@@ -145,16 +147,22 @@ export class SalaryService {
             warnings: calculation.warnings,
           };
         },
-        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          maxWait: SALARY_TRANSACTION_MAX_WAIT_MS,
+          timeout: SALARY_TRANSACTION_TIMEOUT_MS,
+        },
       );
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2034'
+        (error.code === 'P2028' || error.code === 'P2034')
       ) {
         throw new AppException(
           ErrorCode.CONFLICT,
-          'Dữ liệu tính lương vừa thay đổi, vui lòng thực hiện lại',
+          error.code === 'P2028'
+            ? 'Phiên tính lương đã hết hạn, vui lòng thực hiện lại'
+            : 'Dữ liệu tính lương vừa thay đổi, vui lòng thực hiện lại',
           HttpStatus.CONFLICT,
         );
       }

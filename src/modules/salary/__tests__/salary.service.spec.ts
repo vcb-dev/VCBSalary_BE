@@ -325,6 +325,31 @@ describe('SalaryService preview', () => {
     expect(prisma.baseSalaryHistory.findFirst).not.toHaveBeenCalled();
   });
 
+  it('gives the persist transaction time for serialized round-trips and maps expiry to a retryable conflict', async () => {
+    const prisma = makePrismaMock();
+    prisma.payrollPeriodEmployeeSnapshot.findMany.mockResolvedValue([
+      { employeeId: 1 },
+    ]);
+    prisma.$transaction.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError(
+        'Transaction already closed: A query cannot be executed on an expired transaction.',
+        { code: 'P2028', clientVersion: 'test' },
+      ),
+    );
+    const service = makeService(prisma);
+
+    await expect(
+      service.calculatePeriod('admin', 2, SalaryCalculationMode.PERSIST),
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'Phiên tính lương đã hết hạn, vui lòng thực hiện lại',
+    });
+    expect(prisma.$transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({ maxWait: 10_000, timeout: 30_000 }),
+    );
+  });
+
   it('keeps RPM independent when KPI and OKR both fail (regression case B)', async () => {
     const prisma = makePrismaMock();
     prisma.baseSalaryHistory.findFirst.mockResolvedValue({
