@@ -37,6 +37,9 @@ export const AUDITED_ACTIONS = [
   'REVENUE_UPDATED',
   'TRAFFIC_CREATED',
   'TRAFFIC_UPDATED',
+  // Traffic đồng bộ từ AutomationGenVideo cũng vào thẳng công thức lương như số nhập tay, nên
+  // phải truy vết được y như TRAFFIC_CREATED/TRAFFIC_UPDATED.
+  'TRAFFIC_SYNCED',
   'KPI_ACTUAL_OVERRIDE',
   'OKR_ACTUAL_OVERRIDE',
 ] as const;

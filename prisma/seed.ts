@@ -89,8 +89,8 @@ const PERMISSION_CATALOG: PermissionDef[] = [
   { code: 'audit.view_team', name: 'Xem nhật ký kiểm toán của team' },
   { code: 'audit.view_all', name: 'Xem nhật ký kiểm toán toàn hệ thống' },
   { code: 'notification.view_self', name: 'Xem thông báo của chính mình' },
-  { code: 'sync.view', name: 'Xem lịch sử đồng bộ KPI' },
-  { code: 'sync.trigger', name: 'Kích hoạt đồng bộ KPI' },
+  { code: 'sync.view', name: 'Xem lịch sử đồng bộ dữ liệu' },
+  { code: 'sync.trigger', name: 'Kích hoạt đồng bộ dữ liệu' },
   { code: 'report.export', name: 'Xuất báo cáo/dữ liệu' },
 ];
 

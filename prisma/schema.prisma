@@ -152,6 +152,28 @@ enum TrafficPlatform {
   INSTAGRAM
 }
 
+// Enum riêng thay vì dùng lại KpiValueDataSource: traffic là domain khác, và cột
+// `employee_traffic_records.data_source` mang tên enum "Kpi..." sẽ gây hiểu nhầm khi đọc DB.
+enum TrafficDataSource {
+  MANUAL
+  AUTOMATION_GEN_VIDEO
+}
+
+enum TrafficSyncStatus {
+  RUNNING
+  SUCCESS
+  PARTIAL
+  FAILED
+  SKIPPED
+}
+
+enum TrafficSyncItemStatus {
+  SUCCESS
+  SKIPPED
+  FAILED
+  CONFLICT
+}
+
 enum ProposalType {
   KPI_ITEM
   OKR
@@ -184,6 +206,7 @@ model User {
   notifications                 Notification[]
   triggeredOrgSyncRuns          OrgSyncRun[]
   triggeredKpiSyncRuns          KpiSyncRun[]
+  triggeredTrafficSyncRuns      TrafficSyncRun[]
   createdRewardRuleSets         RewardRuleSet[]
   createdBaseSalaryHistories    BaseSalaryHistory[]
   createdEmployeeKpiRewardRates EmployeeKpiRewardRate[]
@@ -318,6 +341,7 @@ model Employee {
   proposals                  KpiOkrProposal[]
   revenueRecords             EmployeeRevenueRecord[]
   trafficRecords             EmployeeTrafficRecord[]
+  trafficSyncItems           TrafficSyncRunItem[]
   salaryRecords              SalaryRecord[]
   externalIdentities         ExternalEmployeeIdentity[]
   teamMemberships            EmployeeTeamMembership[]            @relation("MembershipEmployee")
@@ -529,6 +553,7 @@ model PayrollPeriod {
   okrs                   EmployeeOkr[]
   proposals              KpiOkrProposal[]
   kpiSyncRuns            KpiSyncRun[]
+  trafficSyncRuns        TrafficSyncRun[]
   salaryRecords          SalaryRecord[]
 
   // Chiều ngược của RewardRuleSet.effectiveFromPeriodId — không dùng để truy vấn, chỉ tồn tại
@@ -576,6 +601,12 @@ model EmployeeTrafficRecord {
   leaderReviewedByUserId String?                @map("leader_reviewed_by_user_id") @db.Uuid
   leaderReviewedAt       DateTime?              @map("leader_reviewed_at") @db.Timestamptz()
   leaderRejectionReason  String?                @map("leader_rejection_reason")
+  dataSource             TrafficDataSource      @default(MANUAL) @map("data_source")
+  syncedAt               DateTime?              @map("synced_at") @db.Timestamptz()
+  // Ngày báo cáo bên AutomationGenVideo mà con số này được chốt theo. Traffic là số luỹ kế nên
+  // phải biết nó "tính tới ngày nào" mới đối chiếu được khi có tranh chấp.
+  sourceReportDate       DateTime?              @map("source_report_date") @db.Date
+  sourceChannel          String?                @map("source_channel") @db.VarChar(255)
   createdAt              DateTime               @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt              DateTime               @updatedAt @map("updated_at") @db.Timestamptz()
 
@@ -584,10 +615,78 @@ model EmployeeTrafficRecord {
   selfConfirmedBy  User?                     @relation("TrafficSelfConfirmedBy", fields: [selfConfirmedByUserId], references: [id])
   leaderReviewedBy User?                     @relation("TrafficLeaderReviewedBy", fields: [leaderReviewedByUserId], references: [id])
   attachments      TrafficRecordAttachment[]
+  syncItems        TrafficSyncRunItem[]
 
   @@unique([employeeId, payrollPeriodId, platform])
   @@index([payrollPeriodId])
   @@map("employee_traffic_records")
+}
+
+// Một lượt kéo traffic từ AutomationGenVideo về một kỳ lương. Giữ lại cả lượt không ghi được gì
+// (SKIPPED/FAILED) để luôn trả lời được "ai bấm đồng bộ, lúc nào, kết quả ra sao".
+model TrafficSyncRun {
+  id                String            @id @default(uuid()) @db.Uuid
+  payrollPeriodId   Int               @map("payroll_period_id")
+  /** Khoảng ngày đã hỏi nguồn, chốt từ kỳ lương trừ khi người gọi truyền tay. */
+  dateFrom          DateTime          @map("date_from") @db.Date
+  dateTo            DateTime          @map("date_to") @db.Date
+  /** Lọc theo tên team bên AutomationGenVideo; null = toàn hệ thống. */
+  externalTeamName  String?           @map("external_team_name") @db.VarChar(150)
+  triggeredByUserId String            @map("triggered_by_user_id") @db.Uuid
+  status            TrafficSyncStatus @default(RUNNING)
+  startedAt         DateTime          @default(now()) @map("started_at") @db.Timestamptz()
+  finishedAt        DateTime?         @map("finished_at") @db.Timestamptz()
+  receivedRows      Int               @default(0) @map("received_rows")
+  matchedEmployees  Int               @default(0) @map("matched_employees")
+  unmatchedRows     Int               @default(0) @map("unmatched_rows")
+  successfulRecords Int               @default(0) @map("successful_records")
+  skippedRecords    Int               @default(0) @map("skipped_records")
+  conflictRecords   Int               @default(0) @map("conflict_records")
+  failedRecords     Int               @default(0) @map("failed_records")
+  warningCount      Int               @default(0) @map("warning_count")
+  sourceWarnings    Json?             @map("source_warnings")
+  errorSummary      String?           @map("error_summary")
+  createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz()
+
+  payrollPeriod PayrollPeriod        @relation(fields: [payrollPeriodId], references: [id])
+  triggeredBy   User                 @relation(fields: [triggeredByUserId], references: [id])
+  items         TrafficSyncRunItem[]
+
+  // Migration có thêm partial unique index (WHERE status = 'RUNNING') để không thể có hai lượt
+  // đồng bộ traffic cùng chạy trên một kỳ lương.
+  @@index([startedAt(sort: Desc)])
+  @@index([payrollPeriodId, status])
+  @@map("traffic_sync_runs")
+}
+
+model TrafficSyncRunItem {
+  id                      Int                   @id @default(autoincrement())
+  trafficSyncRunId        String                @map("traffic_sync_run_id") @db.Uuid
+  /** Khoá dòng nguồn: `email:<email>` hoặc `name:<tên>` khi bản ghi cũ thiếu email. */
+  externalRecordKey       String                @map("external_record_key") @db.VarChar(300)
+  externalEmail           String?               @map("external_email") @db.VarChar(255)
+  externalName            String?               @map("external_name") @db.VarChar(200)
+  externalTeam            String?               @map("external_team") @db.VarChar(150)
+  employeeId              Int?                  @map("employee_id")
+  platform                TrafficPlatform?
+  sourceReportDate        DateTime?             @map("source_report_date") @db.Date
+  employeeTrafficRecordId Int?                  @map("employee_traffic_record_id")
+  resultStatus            TrafficSyncItemStatus @map("result_status")
+  previousViews           BigInt?               @map("previous_views")
+  incomingViews           BigInt?               @map("incoming_views")
+  appliedViews            BigInt?               @map("applied_views")
+  hasConflict             Boolean               @default(false) @map("has_conflict")
+  message                 String?
+  createdAt               DateTime              @default(now()) @map("created_at") @db.Timestamptz()
+
+  run                   TrafficSyncRun         @relation(fields: [trafficSyncRunId], references: [id], onDelete: Cascade)
+  employee              Employee?              @relation(fields: [employeeId], references: [id])
+  employeeTrafficRecord EmployeeTrafficRecord? @relation(fields: [employeeTrafficRecordId], references: [id], onDelete: SetNull)
+
+  @@index([trafficSyncRunId, resultStatus, id])
+  @@index([employeeId])
+  @@index([employeeTrafficRecordId])
+  @@map("traffic_sync_run_items")
 }
 
 model TrafficRecordAttachment {

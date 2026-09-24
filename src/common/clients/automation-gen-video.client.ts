@@ -93,6 +93,36 @@ export interface AutomationGenVideoPerformanceGoalResponse {
   warnings: AutomationGenVideoKpiWarning[];
 }
 
+/** Một dòng traffic tay của một người trong đúng một ngày báo cáo, đã gộp mọi kênh của ngày đó. */
+export interface AutomationGenVideoTrafficRow {
+  /** `YYYY-MM-DD` theo giờ Việt Nam. */
+  date: string;
+  email: string | null;
+  name: string | null;
+  team: string | null;
+  fb: number;
+  ig: number;
+  tiktok: number;
+  yt: number;
+  thread: number;
+  zalo: number;
+  total: number;
+  details: { platform: string; channel: string | null; value: number }[];
+}
+
+export interface AutomationGenVideoTrafficResponse {
+  range: { from: string; to: string };
+  rows: AutomationGenVideoTrafficRow[];
+}
+
+export type AutomationGenVideoTrafficQuery = {
+  /** `YYYY-MM-DD`, bao gồm cả hai đầu. */
+  dateFrom: string;
+  dateTo: string;
+  team?: string;
+  email?: string;
+};
+
 /**
  * Gọi các endpoint payroll-sync bên AutomationGenVideo_BE (xác thực
  * bằng API key, xem `docs cấu hình` — cần tạo key qua `POST /api/api-keys` bên đó trước).
@@ -224,6 +254,56 @@ export class AutomationGenVideoClient {
     }
 
     return (await response.json()) as AutomationGenVideoPerformanceGoalResponse;
+  }
+
+  /**
+   * Traffic nhân sự tự báo cáo, tách theo nền tảng và theo từng ngày.
+   *
+   * Timeout rộng hơn các call khác (60s thay vì 30s): endpoint này quét `traffic_reports` của
+   * TOÀN hệ thống trong cả kỳ, và Railway đo được cold start tới ~17s.
+   */
+  async fetchTrafficReports(
+    query: AutomationGenVideoTrafficQuery,
+  ): Promise<AutomationGenVideoTrafficResponse> {
+    const { baseUrl, apiKey } = this.getConnectionConfig();
+    const params = new URLSearchParams({
+      date_from: query.dateFrom,
+      date_to: query.dateTo,
+    });
+    if (query.team) params.set('team', query.team);
+    if (query.email) params.set('email', query.email);
+
+    const response = await fetch(
+      `${baseUrl}/api/task-auto/traffic-reports?${params.toString()}`,
+      { headers: { 'x-api-key': apiKey }, signal: AbortSignal.timeout(60_000) },
+    );
+
+    // 404 ở đây KHÔNG phải "không có dữ liệu" mà là route chưa được deploy bên AGV — phân biệt
+    // rõ để người bấm đồng bộ không tưởng nhầm là kỳ này không ai báo cáo traffic.
+    if (response.status === 404) {
+      throw new AppException(
+        ErrorCode.INTERNAL_ERROR,
+        'VCBI chưa mở endpoint /api/task-auto/traffic-reports',
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
+    if (!response.ok) {
+      throw new AppException(
+        ErrorCode.INTERNAL_ERROR,
+        `VCBI trả lỗi khi lấy traffic (HTTP ${response.status})`,
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
+
+    const payload: unknown = await response.json();
+    if (!isRecord(payload) || !Array.isArray(payload.rows)) {
+      throw new AppException(
+        ErrorCode.INTERNAL_ERROR,
+        'VCBI trả dữ liệu traffic không hợp lệ',
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
+    return payload as unknown as AutomationGenVideoTrafficResponse;
   }
 
   private getConnectionConfig() {
