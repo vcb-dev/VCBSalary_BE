@@ -605,10 +605,20 @@ describe('SalaryService approval and revision workflow', () => {
       totalViewsSnapshot: 56_250_000n,
       rpmRatePer1000ViewsSnapshot: decimal(120),
       rpmRewardAmount: decimal(6_750_000),
-      additionalComponentAmount: decimal(0),
+      additionalComponentAmount: decimal(1_000_000),
       kpiItems: [],
       okrItems: [],
-      components: [],
+      components: [
+        {
+          componentCode: 'BONUS',
+          componentName: 'Thưởng nóng dự án',
+          amount: decimal(1_000_000),
+          note: null,
+          source: 'MANUAL',
+          createdByUserId: 'leader-user',
+          createdAt: new Date('2026-09-20T03:00:00Z'),
+        },
+      ],
     };
     const prisma = {
       salaryRecord: {
@@ -647,6 +657,17 @@ describe('SalaryService approval and revision workflow', () => {
         versionNumber: 2,
         status: 'PENDING',
         calculatedByUserId: 'admin-user',
+        components: {
+          createMany: {
+            data: [
+              expect.objectContaining({
+                componentName: 'Thưởng nóng dự án',
+                createdByUserId: 'leader-user',
+                createdAt: new Date('2026-09-20T03:00:00Z'),
+              }),
+            ],
+          },
+        },
       }),
     });
     expect(auditLog.record).toHaveBeenCalledWith(
@@ -661,5 +682,162 @@ describe('SalaryService approval and revision workflow', () => {
       expect.objectContaining({ maxWait: 10_000, timeout: 30_000 }),
     );
     expect(getBreakdown).not.toHaveBeenCalled();
+  });
+});
+
+describe('SalaryService extra bonus', () => {
+  function bonusPrisma(overrides: Record<string, unknown> = {}) {
+    const prisma = {
+      salaryRecord: {
+        findUnique: jest.fn().mockResolvedValue(approvalRecord(overrides)),
+        findUniqueOrThrow: jest
+          .fn()
+          .mockResolvedValue({ totalSalaryAmount: decimal(33_250_000) }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      salaryRecordComponent: {
+        create: jest.fn().mockResolvedValue({ id: 70 }),
+        findFirst: jest.fn().mockResolvedValue({
+          componentName: 'Thưởng nóng dự án',
+          amount: decimal(1_000_000),
+          source: 'MANUAL',
+        }),
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      $transaction: jest
+        .fn()
+        .mockImplementation((callback: (tx: unknown) => unknown) =>
+          callback(prisma),
+        ),
+    };
+    return prisma;
+  }
+
+  it('adds a manual bonus and raises the draft total in the same transaction', async () => {
+    const prisma = bonusPrisma();
+    const { service, auditLog } = makeWorkflowService(prisma);
+
+    await expect(
+      service.addBonus('leader-user', 30, {
+        name: 'Thưởng nóng dự án',
+        amount: '1000000',
+        note: 'Hoàn thành sớm',
+      }),
+    ).resolves.toEqual({
+      id: 70,
+      salaryRecordId: 30,
+      totalSalaryAmount: '33250000',
+    });
+
+    expect(prisma.salaryRecord.updateMany).toHaveBeenCalledWith({
+      where: { id: 30, status: { in: ['PENDING', 'WARNING'] } },
+      data: {
+        additionalComponentAmount: { increment: decimal(1_000_000) },
+        totalSalaryAmount: { increment: decimal(1_000_000) },
+      },
+    });
+    expect(prisma.salaryRecordComponent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        salaryRecordId: 30,
+        componentCode: 'BONUS',
+        componentName: 'Thưởng nóng dự án',
+        source: 'MANUAL',
+        createdByUserId: 'leader-user',
+      }),
+      select: { id: true },
+    });
+    expect(auditLog.record).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({
+        action: 'SALARY_BONUS_ADDED',
+        targetEmployeeId: 1,
+        beforeData: { totalSalaryAmount: '32250000' },
+        afterData: expect.objectContaining({
+          bonusAmount: '1000000',
+          totalSalaryAmount: '33250000',
+        }),
+      }),
+    );
+  });
+
+  it('refuses to add a bonus to a locked salary', async () => {
+    const prisma = bonusPrisma({ status: 'LOCKED' });
+    const { service } = makeWorkflowService(prisma);
+
+    await expect(
+      service.addBonus('leader-user', 30, { name: 'Thưởng', amount: '1' }),
+    ).rejects.toMatchObject({ code: 'SALARY_ALREADY_LOCKED' });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('does not create the bonus when the salary is approved concurrently', async () => {
+    const prisma = bonusPrisma();
+    prisma.salaryRecord.updateMany.mockResolvedValue({ count: 0 });
+    const { service, auditLog } = makeWorkflowService(prisma);
+
+    await expect(
+      service.addBonus('leader-user', 30, { name: 'Thưởng', amount: '1' }),
+    ).rejects.toMatchObject({ code: 'SALARY_ALREADY_LOCKED' });
+    expect(prisma.salaryRecordComponent.create).not.toHaveBeenCalled();
+    expect(auditLog.record).not.toHaveBeenCalled();
+  });
+
+  it('removes a manual bonus and lowers the draft total', async () => {
+    const prisma = bonusPrisma();
+    prisma.salaryRecord.findUniqueOrThrow.mockResolvedValue({
+      totalSalaryAmount: decimal(32_250_000),
+    });
+    const { service, auditLog } = makeWorkflowService(prisma);
+
+    await expect(
+      service.removeBonus('leader-user', 30, 70),
+    ).resolves.toMatchObject({ id: 70, totalSalaryAmount: '32250000' });
+
+    expect(prisma.salaryRecordComponent.deleteMany).toHaveBeenCalledWith({
+      where: { id: 70, salaryRecordId: 30 },
+    });
+    expect(prisma.salaryRecord.updateMany).toHaveBeenCalledWith({
+      where: { id: 30, status: { in: ['PENDING', 'WARNING'] } },
+      data: {
+        additionalComponentAmount: { decrement: decimal(1_000_000) },
+        totalSalaryAmount: { decrement: decimal(1_000_000) },
+      },
+    });
+    expect(auditLog.record).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({
+        action: 'SALARY_BONUS_REMOVED',
+        beforeData: expect.objectContaining({
+          totalSalaryAmount: '33250000',
+        }),
+        afterData: { totalSalaryAmount: '32250000' },
+      }),
+    );
+  });
+
+  it('subtracts a bonus only once when two removals race', async () => {
+    const prisma = bonusPrisma();
+    prisma.salaryRecordComponent.deleteMany.mockResolvedValue({ count: 0 });
+    const { service } = makeWorkflowService(prisma);
+
+    await expect(
+      service.removeBonus('leader-user', 30, 70),
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(prisma.salaryRecord.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('keeps system components out of manual bonus removal', async () => {
+    const prisma = bonusPrisma();
+    prisma.salaryRecordComponent.findFirst.mockResolvedValue({
+      componentName: 'Phụ cấp hệ thống',
+      amount: decimal(500_000),
+      source: 'SYSTEM',
+    });
+    const { service } = makeWorkflowService(prisma);
+
+    await expect(
+      service.removeBonus('leader-user', 30, 70),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });

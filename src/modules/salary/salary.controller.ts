@@ -1,5 +1,7 @@
 import {
+  Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -11,6 +13,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthUserPayload } from '../../common/types/auth-user.types';
 import {
   CalculateSalaryQueryDto,
+  CreateSalaryBonusDto,
   ListSalaryRecordsQueryDto,
 } from './dto/salary.dto';
 import { SalaryService } from './salary.service';
@@ -100,5 +103,25 @@ export class SalaryRecordsController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.salaryService.createRevision(user.id, id);
+  }
+
+  @RequirePermission('salary.bonus')
+  @Post(':id/bonuses')
+  addBonus(
+    @CurrentUser() user: AuthUserPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateSalaryBonusDto,
+  ) {
+    return this.salaryService.addBonus(user.id, id, dto);
+  }
+
+  @RequirePermission('salary.bonus')
+  @Delete(':id/bonuses/:bonusId')
+  removeBonus(
+    @CurrentUser() user: AuthUserPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('bonusId', ParseIntPipe) bonusId: number,
+  ) {
+    return this.salaryService.removeBonus(user.id, id, bonusId);
   }
 }

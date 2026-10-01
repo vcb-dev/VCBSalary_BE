@@ -2,6 +2,7 @@ import { HttpStatus, Injectable } from '@nestjs/common';
 import {
   PayrollPeriodStatus,
   Prisma,
+  SalaryComponentSource,
   SalaryRecordStatus,
 } from '@prisma/client';
 import { AppException } from '../../common/errors/app.exception';
@@ -14,6 +15,7 @@ import { PeriodScopeService } from '../access-control/period-scope.service';
 import { AuditLogService } from '../audit/audit-log.service';
 import {
   SalaryCalculationMode,
+  type CreateSalaryBonusDto,
   type ListSalaryRecordsQueryDto,
 } from './dto/salary.dto';
 import {
@@ -36,6 +38,12 @@ const ZERO = new Prisma.Decimal(0);
 const SALARY_BATCH_CONCURRENCY = 6;
 const SALARY_TRANSACTION_MAX_WAIT_MS = 10_000;
 const SALARY_TRANSACTION_TIMEOUT_MS = 30_000;
+const SALARY_BONUS_COMPONENT_CODE = 'BONUS';
+// Thưởng thêm chỉ sửa được trên bản nháp; bản đã khóa phải đi qua bản điều chỉnh như mọi khoản khác.
+const BONUS_EDITABLE_STATUSES = [
+  SalaryRecordStatus.PENDING,
+  SalaryRecordStatus.WARNING,
+];
 type DbClient = Pick<
   Prisma.TransactionClient,
   | 'payrollPeriod'
@@ -62,7 +70,10 @@ const salaryRecordBreakdownInclude = {
   payrollPeriod: { select: { status: true } },
   kpiItems: { orderBy: { id: 'asc' as const } },
   okrItems: { orderBy: { id: 'asc' as const } },
-  components: { orderBy: { id: 'asc' as const } },
+  components: {
+    orderBy: { id: 'asc' as const },
+    include: { createdBy: { select: { id: true, fullName: true } } },
+  },
 } satisfies Prisma.SalaryRecordInclude;
 
 type SalaryRecordSummary = Prisma.SalaryRecordGetPayload<{
@@ -752,7 +763,9 @@ export class SalaryService {
                           amount: component.amount,
                           note: component.note,
                           source: component.source,
-                          createdByUserId: actorUserId,
+                          // Giữ người nhập gốc: bản điều chỉnh chỉ sao chép, không tạo khoản mới.
+                          createdByUserId: component.createdByUserId,
+                          createdAt: component.createdAt,
                         })),
                       },
                     }
@@ -803,6 +816,207 @@ export class SalaryService {
           error.code === 'P2028'
             ? 'Phiên tạo bản điều chỉnh đã hết hạn, vui lòng thử lại'
             : 'Đã có yêu cầu tạo phiên bản điều chỉnh khác được xử lý',
+          HttpStatus.CONFLICT,
+        );
+      }
+      throw error;
+    }
+  }
+
+  async addBonus(actorUserId: string, id: number, dto: CreateSalaryBonusDto) {
+    const record = await this.getBonusEditableRecord(actorUserId, id);
+    const amount = new Prisma.Decimal(dto.amount);
+    const note = dto.note || null;
+    return this.runBonusTransaction(async (tx) => {
+      // Cộng thẳng vào snapshot thay vì tính lại cả bảng lương: các khoản khác không đổi, và
+      // điều kiện trạng thái trong updateMany chặn việc cộng vào bản vừa được duyệt đồng thời.
+      await this.claimBonusEditableRecord(tx, id, {
+        additionalComponentAmount: { increment: amount },
+        totalSalaryAmount: { increment: amount },
+      });
+      const [bonus, updated] = await Promise.all([
+        tx.salaryRecordComponent.create({
+          data: {
+            salaryRecordId: id,
+            componentCode: SALARY_BONUS_COMPONENT_CODE,
+            componentName: dto.name,
+            amount,
+            note,
+            source: SalaryComponentSource.MANUAL,
+            createdByUserId: actorUserId,
+          },
+          select: { id: true },
+        }),
+        tx.salaryRecord.findUniqueOrThrow({
+          where: { id },
+          select: { totalSalaryAmount: true },
+        }),
+      ]);
+      await this.auditLog.record(tx, {
+        actorUserId,
+        action: 'SALARY_BONUS_ADDED',
+        entityType: 'SalaryRecord',
+        entityId: id,
+        targetEmployeeId: record.employeeId,
+        payrollPeriodId: record.payrollPeriodId,
+        beforeData: {
+          totalSalaryAmount: updated.totalSalaryAmount.minus(amount).toFixed(0),
+        },
+        afterData: {
+          bonusName: dto.name,
+          bonusAmount: amount.toFixed(0),
+          ...(note ? { note } : {}),
+          totalSalaryAmount: updated.totalSalaryAmount.toFixed(0),
+        },
+      });
+      return {
+        id: bonus.id,
+        salaryRecordId: id,
+        totalSalaryAmount: updated.totalSalaryAmount.toFixed(0),
+      };
+    });
+  }
+
+  async removeBonus(actorUserId: string, id: number, bonusId: number) {
+    const [record, bonus] = await Promise.all([
+      this.getBonusEditableRecord(actorUserId, id),
+      this.prisma.salaryRecordComponent.findFirst({
+        where: { id: bonusId, salaryRecordId: id },
+        select: { componentName: true, amount: true, source: true },
+      }),
+    ]);
+    if (!bonus) {
+      throw new AppException(
+        ErrorCode.NOT_FOUND,
+        'Không tìm thấy khoản thưởng thêm',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+    if (bonus.source !== SalaryComponentSource.MANUAL) {
+      throw new AppException(
+        ErrorCode.VALIDATION_ERROR,
+        'Chỉ xóa được khoản thưởng nhập tay',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    return this.runBonusTransaction(async (tx) => {
+      // Xóa trước rồi mới trừ tiền: hai request xóa cùng lúc chỉ một bên xóa được, nên tổng lương
+      // không bị trừ hai lần.
+      const deleted = await tx.salaryRecordComponent.deleteMany({
+        where: { id: bonusId, salaryRecordId: id },
+      });
+      if (deleted.count !== 1) {
+        throw new AppException(
+          ErrorCode.CONFLICT,
+          'Khoản thưởng vừa được xóa bởi một yêu cầu khác',
+          HttpStatus.CONFLICT,
+        );
+      }
+      await this.claimBonusEditableRecord(tx, id, {
+        additionalComponentAmount: { decrement: bonus.amount },
+        totalSalaryAmount: { decrement: bonus.amount },
+      });
+      const updated = await tx.salaryRecord.findUniqueOrThrow({
+        where: { id },
+        select: { totalSalaryAmount: true },
+      });
+      await this.auditLog.record(tx, {
+        actorUserId,
+        action: 'SALARY_BONUS_REMOVED',
+        entityType: 'SalaryRecord',
+        entityId: id,
+        targetEmployeeId: record.employeeId,
+        payrollPeriodId: record.payrollPeriodId,
+        beforeData: {
+          bonusName: bonus.componentName,
+          bonusAmount: bonus.amount.toFixed(0),
+          totalSalaryAmount: updated.totalSalaryAmount
+            .plus(bonus.amount)
+            .toFixed(0),
+        },
+        afterData: {
+          totalSalaryAmount: updated.totalSalaryAmount.toFixed(0),
+        },
+      });
+      return {
+        id: bonusId,
+        salaryRecordId: id,
+        totalSalaryAmount: updated.totalSalaryAmount.toFixed(0),
+      };
+    });
+  }
+
+  private async getBonusEditableRecord(actorUserId: string, id: number) {
+    const record = await this.prisma.salaryRecord.findUnique({
+      where: { id },
+      select: {
+        employeeId: true,
+        payrollPeriodId: true,
+        status: true,
+        payrollPeriod: { select: { status: true } },
+      },
+    });
+    if (!record) this.throwRecordNotFound();
+    await this.assertVisibleForPermission(
+      actorUserId,
+      record.payrollPeriodId,
+      record.employeeId,
+      'salary.bonus',
+    );
+    if (!BONUS_EDITABLE_STATUSES.some((status) => status === record.status)) {
+      throw new AppException(
+        ErrorCode.SALARY_ALREADY_LOCKED,
+        'Bản lương đã khóa; cần tạo phiên bản điều chỉnh trước khi thay đổi thưởng thêm',
+        HttpStatus.CONFLICT,
+      );
+    }
+    if (
+      record.payrollPeriod.status !== PayrollPeriodStatus.OPEN &&
+      record.payrollPeriod.status !== PayrollPeriodStatus.IN_REVIEW
+    ) {
+      throw new AppException(
+        ErrorCode.VALIDATION_ERROR,
+        'Chỉ thay đổi thưởng thêm khi kỳ lương đang mở hoặc đang duyệt',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    return record;
+  }
+
+  private async claimBonusEditableRecord(
+    tx: Prisma.TransactionClient,
+    id: number,
+    data: Prisma.SalaryRecordUpdateManyMutationInput,
+  ) {
+    const claimed = await tx.salaryRecord.updateMany({
+      where: { id, status: { in: BONUS_EDITABLE_STATUSES } },
+      data,
+    });
+    if (claimed.count !== 1) {
+      throw new AppException(
+        ErrorCode.SALARY_ALREADY_LOCKED,
+        'Bản lương vừa được duyệt hoặc thay đổi bởi một yêu cầu khác',
+        HttpStatus.CONFLICT,
+      );
+    }
+  }
+
+  private async runBonusTransaction<T>(
+    operation: (tx: Prisma.TransactionClient) => Promise<T>,
+  ) {
+    try {
+      return await this.prisma.$transaction(operation, {
+        maxWait: SALARY_TRANSACTION_MAX_WAIT_MS,
+        timeout: SALARY_TRANSACTION_TIMEOUT_MS,
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        (error.code === 'P2028' || error.code === 'P2034')
+      ) {
+        throw new AppException(
+          ErrorCode.CONFLICT,
+          'Bản lương vừa thay đổi, vui lòng tải lại và thực hiện lại',
           HttpStatus.CONFLICT,
         );
       }
@@ -1554,7 +1768,10 @@ export class SalaryService {
     periodId: number,
     employeeId: number,
     permissionCode:
-      'salary.calculate' | 'salary.final_approve' | 'salary.create_revision',
+      | 'salary.calculate'
+      | 'salary.final_approve'
+      | 'salary.create_revision'
+      | 'salary.bonus',
   ) {
     const scope = await this.authorization.resolvePermissionScope(
       actorUserId,
@@ -1717,6 +1934,8 @@ export class SalaryService {
         amount: component.amount.toFixed(0),
         note: component.note,
         source: component.source,
+        createdAt: component.createdAt,
+        createdBy: component.createdBy,
       })),
     };
   }
