@@ -22,8 +22,11 @@ export class UsersController {
 
   @RequirePermission('user.manage')
   @Get()
-  list(@Query() query: PaginationQueryDto) {
-    return this.usersService.list(query);
+  list(
+    @CurrentUser() user: AuthUserPayload,
+    @Query() query: PaginationQueryDto,
+  ) {
+    return this.usersService.list(query, user.id);
   }
 
   @RequirePermission('user.manage')

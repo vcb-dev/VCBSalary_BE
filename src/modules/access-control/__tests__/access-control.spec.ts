@@ -399,6 +399,7 @@ describe('RolesService security invariants', () => {
 
 interface PrismaMock {
   user: {
+    findMany: jest.Mock;
     findFirst: jest.Mock;
     findUnique: jest.Mock;
     findUniqueOrThrow: jest.Mock;
@@ -406,7 +407,7 @@ interface PrismaMock {
     create: jest.Mock;
     update: jest.Mock;
   };
-  employee: { findUnique: jest.Mock };
+  employee: { findUnique: jest.Mock; count: jest.Mock };
   role: { findMany: jest.Mock };
   team: { count: jest.Mock };
   userRole: { deleteMany: jest.Mock; createMany: jest.Mock };
@@ -430,6 +431,7 @@ function makeUserRow(overrides: Partial<Record<string, unknown>> = {}) {
 function makeUsersPrismaMock(): PrismaMock {
   const mock: PrismaMock = {
     user: {
+      findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn().mockResolvedValue(null), // không trùng email/employee mặc định
       findUnique: jest.fn().mockResolvedValue(makeUserRow()),
       findUniqueOrThrow: jest.fn().mockResolvedValue(makeUserRow()),
@@ -444,6 +446,7 @@ function makeUsersPrismaMock(): PrismaMock {
         fullName: 'Nhân sự E1',
         employeeGroups: [],
       }),
+      count: jest.fn().mockResolvedValue(1),
     },
     role: { findMany: jest.fn().mockResolvedValue([]) },
     team: { count: jest.fn().mockResolvedValue(0) },
@@ -802,6 +805,110 @@ describe('UsersService — gắn tài khoản với nhân sự', () => {
         { code: 'CONFLICT' },
       );
       expect(prisma.userRole.deleteMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('scope quản lý tài khoản', () => {
+    function makeAuthorizationScope(scope: {
+      type: 'ALL' | 'SELF' | 'NONE' | 'TEAM';
+      teamIds?: number[];
+    }) {
+      return {
+        resolvePermissionScope: jest.fn().mockResolvedValue(scope),
+        getEmployeeId: jest.fn().mockResolvedValue(10),
+      };
+    }
+
+    it('chỉ liệt kê tài khoản gắn với nhân sự thuộc team của Leader', async () => {
+      const prisma = makeUsersPrismaMock();
+      const authorization = makeAuthorizationScope({
+        type: 'TEAM',
+        teamIds: [7],
+      });
+      const service = new UsersService(prisma as never, authorization as never);
+
+      await service.list({ page: 1, pageSize: 20 }, 'leader-user');
+
+      const expectedWhere = {
+        employee: {
+          is: {
+            OR: [
+              { teamId: { in: [7] } },
+              {
+                teamMemberships: {
+                  some: { teamId: { in: [7] }, isActive: true },
+                },
+              },
+            ],
+          },
+        },
+      };
+      expect(prisma.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expectedWhere }),
+      );
+      expect(prisma.user.count).toHaveBeenCalledWith({
+        where: expectedWhere,
+      });
+    });
+
+    it('chặn Leader sửa tài khoản ngoài team ngay cả khi gọi API trực tiếp', async () => {
+      const prisma = makeUsersPrismaMock();
+      prisma.user.count.mockResolvedValue(0);
+      const authorization = makeAuthorizationScope({
+        type: 'TEAM',
+        teamIds: [7],
+      });
+      const service = new UsersService(prisma as never, authorization as never);
+
+      await expect(
+        service.update(
+          'outside-user',
+          { fullName: 'Không được sửa' },
+          'leader-user',
+        ),
+      ).rejects.toMatchObject({ code: 'OUT_OF_SCOPE' });
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('chặn Leader gán vai trò ALL cho tài khoản trong team', async () => {
+      const prisma = makeUsersPrismaMock();
+      prisma.role.findMany.mockResolvedValue([{ id: 2, code: 'HR' }]);
+      const authorization = makeAuthorizationScope({
+        type: 'TEAM',
+        teamIds: [7],
+      });
+      const service = new UsersService(prisma as never, authorization as never);
+
+      await expect(
+        service.setRoles(
+          'team-user',
+          { roles: [{ roleId: 2, scopeType: 'ALL' }] },
+          'leader-user',
+        ),
+      ).rejects.toMatchObject({ code: 'OUT_OF_SCOPE' });
+      expect(prisma.userRole.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('chặn Leader tạo tài khoản cho nhân sự ngoài team', async () => {
+      const prisma = makeUsersPrismaMock();
+      prisma.employee.count.mockResolvedValue(0);
+      const authorization = makeAuthorizationScope({
+        type: 'TEAM',
+        teamIds: [7],
+      });
+      const service = new UsersService(prisma as never, authorization as never);
+
+      await expect(
+        service.create(
+          {
+            email: 'outside@x.com',
+            password: 'password123',
+            employeeId: 99,
+          },
+          'leader-user',
+        ),
+      ).rejects.toMatchObject({ code: 'OUT_OF_SCOPE' });
+      expect(prisma.user.create).not.toHaveBeenCalled();
     });
   });
 });

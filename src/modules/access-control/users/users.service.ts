@@ -1,5 +1,5 @@
-import { HttpStatus, Injectable } from '@nestjs/common';
-import { ScopeType } from '@prisma/client';
+import { HttpStatus, Injectable, Optional } from '@nestjs/common';
+import { Prisma, ScopeType } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { AppException } from '../../../common/errors/app.exception';
 import { ErrorCode } from '../../../common/errors/error-codes';
@@ -9,6 +9,9 @@ import {
   type PaginationQueryDto,
 } from '../../../common/utils/pagination.dto';
 import { PrismaService } from '../../../prisma/prisma.service';
+import type { ResolvedScope } from '../../../common/types/resolved-scope.types';
+import { buildEmployeeScopeWhere } from '../../organization/employees/employee-scope.util';
+import { AuthorizationService } from '../authorization.service';
 import type {
   CreateUserDto,
   SetUserRolesDto,
@@ -43,18 +46,24 @@ const ROLE_INCLUDE = {
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly authorization?: AuthorizationService,
+  ) {}
 
-  async list(query: PaginationQueryDto) {
+  async list(query: PaginationQueryDto, actorUserId?: string) {
+    const scope = await this.resolveManagementScope(actorUserId);
+    const where = scope ? this.buildUserScopeWhere(scope, actorUserId!) : {};
     const { skip, take } = toSkipTake(query.page, query.pageSize);
     const [data, total] = await Promise.all([
       this.prisma.user.findMany({
+        where,
         skip,
         take,
         orderBy: { createdAt: 'desc' },
         include: ROLE_INCLUDE,
       }),
-      this.prisma.user.count(),
+      this.prisma.user.count({ where }),
     ]);
 
     return paginate(
@@ -81,6 +90,7 @@ export class UsersService {
   }
 
   async create(dto: CreateUserDto, actorUserId?: string) {
+    const actorScope = await this.resolveManagementScope(actorUserId);
     const existing = await this.prisma.user.findFirst({
       where: { email: dto.email.toLowerCase() },
     });
@@ -95,9 +105,15 @@ export class UsersService {
     const employee = dto.employeeId
       ? await this.assertEmployeeLinkable(dto.employeeId)
       : null;
+    await this.assertEmployeeWithinManagementScope(
+      dto.employeeId,
+      actorScope,
+      actorUserId,
+    );
 
     if (dto.roles && dto.roles.length > 0) {
       await this.assertValidRoleAssignments(dto.roles);
+      this.assertRoleAssignmentsWithinManagementScope(dto.roles, actorScope);
     }
 
     // Gán vai trò ngay lúc tạo để không còn bước "vào Phân quyền gán vai trò" tách rời:
@@ -156,7 +172,9 @@ export class UsersService {
   }
 
   async update(id: string, dto: UpdateUserDto, actorUserId?: string) {
+    const actorScope = await this.resolveManagementScope(actorUserId);
     const existingUser = await this.getOrThrow(id);
+    await this.assertUserWithinManagementScope(id, actorUserId, actorScope);
 
     if (
       dto.status !== undefined &&
@@ -186,6 +204,13 @@ export class UsersService {
     // undefined trong `data`); null tường minh = gỡ liên kết; uuid = gắn/đổi (đã validate ở dưới).
     if (dto.employeeId) {
       await this.assertEmployeeLinkable(dto.employeeId, id);
+    }
+    if (dto.employeeId !== undefined) {
+      await this.assertEmployeeWithinManagementScope(
+        dto.employeeId ?? undefined,
+        actorScope,
+        actorUserId,
+      );
     }
 
     const user = await this.prisma.$transaction(async (tx) => {
@@ -232,8 +257,11 @@ export class UsersService {
   }
 
   async setRoles(userId: string, dto: SetUserRolesDto, actorUserId?: string) {
+    const actorScope = await this.resolveManagementScope(actorUserId);
     const existingUser = await this.getOrThrow(userId);
+    await this.assertUserWithinManagementScope(userId, actorUserId, actorScope);
     await this.assertValidRoleAssignments(dto.roles);
+    this.assertRoleAssignmentsWithinManagementScope(dto.roles, actorScope);
     const roleAssignments = this.normalizeRoleAssignments(dto.roles);
 
     const adminRole = existingUser.userRoles.find(
@@ -285,6 +313,131 @@ export class UsersService {
   async getProfile(userId: string) {
     const user = await this.getOrThrow(userId);
     return this.toSummary(user);
+  }
+
+  /**
+   * Scope của đúng permission `user.manage`. Không dùng scope tổng hợp theo resource để một role
+   * khác không thể vô tình mở rộng quyền quản lý tài khoản.
+   */
+  private async resolveManagementScope(
+    actorUserId?: string,
+  ): Promise<ResolvedScope | null> {
+    if (!actorUserId) return null;
+    if (!this.authorization) {
+      throw new AppException(
+        ErrorCode.FORBIDDEN,
+        'Không thể xác định phạm vi quản lý tài khoản',
+        HttpStatus.FORBIDDEN,
+      );
+    }
+    return this.authorization.resolvePermissionScope(
+      actorUserId,
+      'user.manage',
+    );
+  }
+
+  private buildUserScopeWhere(
+    scope: ResolvedScope,
+    actorUserId: string,
+  ): Prisma.UserWhereInput {
+    switch (scope.type) {
+      case 'ALL':
+        return {};
+      case 'TEAM':
+        return {
+          employee: {
+            is: buildEmployeeScopeWhere(scope, null),
+          },
+        };
+      case 'SELF':
+        return { id: actorUserId };
+      case 'NONE':
+      default:
+        return { id: { in: [] } };
+    }
+  }
+
+  private async assertUserWithinManagementScope(
+    targetUserId: string,
+    actorUserId: string | undefined,
+    scope: ResolvedScope | null,
+  ): Promise<void> {
+    if (!scope || scope.type === 'ALL') return;
+    const visible = await this.prisma.user.count({
+      where: {
+        AND: [
+          { id: targetUserId },
+          this.buildUserScopeWhere(scope, actorUserId!),
+        ],
+      },
+    });
+    if (visible === 0) {
+      throw new AppException(
+        ErrorCode.OUT_OF_SCOPE,
+        'Tài khoản này không thuộc phạm vi quản lý của bạn',
+        HttpStatus.FORBIDDEN,
+      );
+    }
+  }
+
+  private async assertEmployeeWithinManagementScope(
+    employeeId: number | undefined,
+    scope: ResolvedScope | null,
+    actorUserId?: string,
+  ): Promise<void> {
+    if (!scope || scope.type === 'ALL') return;
+    if (!employeeId) {
+      throw new AppException(
+        ErrorCode.OUT_OF_SCOPE,
+        'Tài khoản do phạm vi TEAM quản lý phải gắn với nhân sự thuộc team',
+        HttpStatus.FORBIDDEN,
+      );
+    }
+
+    const selfEmployeeId =
+      scope.type === 'SELF' && actorUserId
+        ? await this.authorization!.getEmployeeId(actorUserId)
+        : null;
+    const visible = await this.prisma.employee.count({
+      where: {
+        AND: [
+          { id: employeeId },
+          buildEmployeeScopeWhere(scope, selfEmployeeId),
+        ],
+      },
+    });
+    if (visible === 0) {
+      throw new AppException(
+        ErrorCode.OUT_OF_SCOPE,
+        'Nhân sự được gắn không thuộc phạm vi quản lý của bạn',
+        HttpStatus.FORBIDDEN,
+      );
+    }
+  }
+
+  private assertRoleAssignmentsWithinManagementScope(
+    roles: readonly UserRoleAssignmentDto[],
+    scope: ResolvedScope | null,
+  ): void {
+    if (!scope || scope.type === 'ALL') return;
+
+    const outsideScope = roles.some((assignment) => {
+      if (scope.type === 'NONE') return true;
+      if (assignment.scopeType === ScopeType.ALL) return true;
+      if (assignment.scopeType === ScopeType.SELF) return false;
+      return (
+        scope.type !== 'TEAM' ||
+        assignment.scopeTeamId == null ||
+        !scope.teamIds.includes(assignment.scopeTeamId)
+      );
+    });
+    if (outsideScope) {
+      throw new AppException(
+        ErrorCode.OUT_OF_SCOPE,
+        'Không thể gán vai trò vượt ngoài phạm vi quản lý của bạn',
+        HttpStatus.FORBIDDEN,
+      );
+    }
   }
 
   /** Nhân sự phải tồn tại và chưa gắn tài khoản nào khác (unique employeeId ở DB — kiểm trước để
