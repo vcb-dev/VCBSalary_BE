@@ -123,6 +123,61 @@ export type AutomationGenVideoTrafficQuery = {
   email?: string;
 };
 
+export type AutomationGenVideoTaskComplianceSource = 'AUTO_A4' | 'DAILY_PLAN';
+
+export interface AutomationGenVideoTaskComplianceRecord {
+  id: string;
+  user_id: string;
+  employee_id: string | null;
+  user_name: string;
+  team_id: string;
+  work_date: string;
+  content_line: { id: string; name: string };
+  source: AutomationGenVideoTaskComplianceSource;
+  expected_count: number;
+  completed_count: number;
+  missing_count: number;
+  deadline: string;
+  evaluated_at: string;
+}
+
+export interface AutomationGenVideoTaskComplianceResponse {
+  contract_version: string;
+  generated_at: string;
+  timezone: string;
+  range: { from: string; to: string };
+  team: { id: string; name: string };
+  filters: { user_id: string | null };
+  coverage: {
+    snapshot_count: number;
+    evaluated_from: string | null;
+    evaluated_through: string | null;
+  };
+  summary: {
+    expected: number;
+    completed_on_time: number;
+    missing: number;
+    affected_days: number;
+    affected_records: number;
+  };
+  records: AutomationGenVideoTaskComplianceRecord[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    total_pages: number;
+  };
+  warnings: AutomationGenVideoKpiWarning[];
+}
+
+export type AutomationGenVideoTaskComplianceQuery = {
+  dateFrom: string;
+  dateTo: string;
+  externalUserId: string;
+  page: number;
+  limit: number;
+};
+
 /**
  * Gọi các endpoint payroll-sync bên AutomationGenVideo_BE (xác thực
  * bằng API key, xem `docs cấu hình` — cần tạo key qua `POST /api/api-keys` bên đó trước).
@@ -306,6 +361,53 @@ export class AutomationGenVideoClient {
     return payload as unknown as AutomationGenVideoTrafficResponse;
   }
 
+  /**
+   * Đọc snapshot tuân thủ nhiệm vụ đã chốt bên VCBI cho đúng một nhân sự/team.
+   * Salary chỉ hiển thị dữ liệu này để đánh giá; không sao chép vào cơ sở dữ liệu lương.
+   */
+  async fetchTaskComplianceForPayrollSync(
+    externalTeamId: string,
+    query: AutomationGenVideoTaskComplianceQuery,
+  ): Promise<AutomationGenVideoTaskComplianceResponse> {
+    const { baseUrl, apiKey } = this.getConnectionConfig();
+    const params = new URLSearchParams({
+      from: query.dateFrom,
+      to: query.dateTo,
+      user_id: query.externalUserId,
+      page: String(query.page),
+      limit: String(query.limit),
+    });
+    const response = await fetch(
+      `${baseUrl}/api/task-auto/teams/${encodeURIComponent(externalTeamId)}/task-compliance/payroll-sync?${params.toString()}`,
+      { headers: { 'x-api-key': apiKey }, signal: AbortSignal.timeout(30_000) },
+    );
+
+    if (response.status === 404) {
+      throw new AppException(
+        ErrorCode.INTERNAL_ERROR,
+        'VCBI chưa mở endpoint lịch sử tuân thủ nhiệm vụ hoặc không tìm thấy team',
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
+    if (!response.ok) {
+      throw new AppException(
+        ErrorCode.INTERNAL_ERROR,
+        `VCBI trả lỗi khi lấy lịch sử tuân thủ nhiệm vụ (HTTP ${response.status})`,
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
+
+    const payload: unknown = await response.json();
+    if (!isTaskComplianceResponse(payload)) {
+      throw new AppException(
+        ErrorCode.INTERNAL_ERROR,
+        'VCBI trả dữ liệu tuân thủ nhiệm vụ không hợp lệ',
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
+    return payload;
+  }
+
   private getConnectionConfig() {
     const baseUrl = this.config
       .get<string>('AUTOMATION_GEN_VIDEO_BASE_URL', '')
@@ -329,4 +431,82 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isTeamSummary(value: unknown): value is AutomationGenVideoTeamSummary {
   return isRecord(value) && typeof value.id === 'string' && value.id.length > 0;
+}
+
+function isTaskComplianceResponse(
+  value: unknown,
+): value is AutomationGenVideoTaskComplianceResponse {
+  if (!isRecord(value)) return false;
+  const summary = value.summary;
+  const coverage = value.coverage;
+  const pagination = value.pagination;
+  const range = value.range;
+  const team = value.team;
+  const filters = value.filters;
+  return (
+    typeof value.contract_version === 'string' &&
+    typeof value.generated_at === 'string' &&
+    typeof value.timezone === 'string' &&
+    isRecord(range) &&
+    typeof range.from === 'string' &&
+    typeof range.to === 'string' &&
+    isRecord(team) &&
+    typeof team.id === 'string' &&
+    typeof team.name === 'string' &&
+    isRecord(filters) &&
+    (filters.user_id === null || typeof filters.user_id === 'string') &&
+    isRecord(summary) &&
+    typeof summary.expected === 'number' &&
+    typeof summary.completed_on_time === 'number' &&
+    typeof summary.missing === 'number' &&
+    typeof summary.affected_days === 'number' &&
+    typeof summary.affected_records === 'number' &&
+    isRecord(coverage) &&
+    typeof coverage.snapshot_count === 'number' &&
+    (coverage.evaluated_from === null ||
+      typeof coverage.evaluated_from === 'string') &&
+    (coverage.evaluated_through === null ||
+      typeof coverage.evaluated_through === 'string') &&
+    Array.isArray(value.records) &&
+    value.records.every(isTaskComplianceRecord) &&
+    isRecord(pagination) &&
+    typeof pagination.page === 'number' &&
+    typeof pagination.limit === 'number' &&
+    typeof pagination.total === 'number' &&
+    typeof pagination.total_pages === 'number' &&
+    Array.isArray(value.warnings) &&
+    value.warnings.every(isTaskComplianceWarning)
+  );
+}
+
+function isTaskComplianceWarning(
+  value: unknown,
+): value is AutomationGenVideoKpiWarning {
+  return (
+    isRecord(value) &&
+    typeof value.code === 'string' &&
+    typeof value.message === 'string' &&
+    (value.user_id === undefined || typeof value.user_id === 'string')
+  );
+}
+
+function isTaskComplianceRecord(
+  value: unknown,
+): value is AutomationGenVideoTaskComplianceRecord {
+  if (!isRecord(value) || !isRecord(value.content_line)) return false;
+  return (
+    typeof value.id === 'string' &&
+    typeof value.user_id === 'string' &&
+    typeof value.user_name === 'string' &&
+    typeof value.team_id === 'string' &&
+    typeof value.work_date === 'string' &&
+    typeof value.content_line.id === 'string' &&
+    typeof value.content_line.name === 'string' &&
+    (value.source === 'AUTO_A4' || value.source === 'DAILY_PLAN') &&
+    typeof value.expected_count === 'number' &&
+    typeof value.completed_count === 'number' &&
+    typeof value.missing_count === 'number' &&
+    typeof value.deadline === 'string' &&
+    typeof value.evaluated_at === 'string'
+  );
 }

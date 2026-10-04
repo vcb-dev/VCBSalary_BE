@@ -14,6 +14,8 @@ import { KpiSyncController } from './kpi-sync/kpi-sync.controller';
 import { KpiSyncService } from './kpi-sync/kpi-sync.service';
 import { EmployeeKpiTargetsController } from './kpi-employee-targets/kpi-employee-targets.controller';
 import { EmployeeKpiTargetsService } from './kpi-employee-targets/kpi-employee-targets.service';
+import { TaskComplianceController } from './task-compliance/task-compliance.controller';
+import { TaskComplianceService } from './task-compliance/task-compliance.service';
 
 @Module({
   imports: [AccessControlModule, AuditModule, OrganizationModule],
@@ -24,6 +26,7 @@ import { EmployeeKpiTargetsService } from './kpi-employee-targets/kpi-employee-t
     KpiAssignmentsController,
     KpiActualsController,
     KpiSyncController,
+    TaskComplianceController,
   ],
   providers: [
     KpiGroupsService,
@@ -32,6 +35,7 @@ import { EmployeeKpiTargetsService } from './kpi-employee-targets/kpi-employee-t
     KpiAssignmentsService,
     KpiActualsService,
     KpiSyncService,
+    TaskComplianceService,
   ],
   exports: [
     KpiGroupsService,
