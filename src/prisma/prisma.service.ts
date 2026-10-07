@@ -8,6 +8,12 @@ import { Prisma, PrismaClient } from '@prisma/client';
 
 const MAX_CONNECT_ATTEMPTS = 5;
 const INITIAL_RETRY_DELAY_MS = 1_000;
+// Interactive transaction chạy tuần tự trên một connection (Promise.all bên trong không song song).
+// DB ở Singapore nên chỉ ~8 round-trip lúc mạng chậm đã vượt mặc định 5s của Prisma (P2028), làm
+// rollback cả thao tác ghi lẫn audit. Đặt mặc định chung để mọi `$transaction(async …)` đều có
+// biên độ; nơi nào cần khác vẫn truyền options riêng để ghi đè.
+const TRANSACTION_MAX_WAIT_MS = 10_000;
+const TRANSACTION_TIMEOUT_MS = 30_000;
 
 @Injectable()
 export class PrismaService
@@ -15,6 +21,15 @@ export class PrismaService
   implements OnModuleInit, OnModuleDestroy
 {
   private readonly logger = new Logger(PrismaService.name);
+
+  constructor() {
+    super({
+      transactionOptions: {
+        maxWait: TRANSACTION_MAX_WAIT_MS,
+        timeout: TRANSACTION_TIMEOUT_MS,
+      },
+    });
+  }
 
   async onModuleInit() {
     for (let attempt = 1; attempt <= MAX_CONNECT_ATTEMPTS; attempt += 1) {
