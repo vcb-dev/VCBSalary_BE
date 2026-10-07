@@ -31,8 +31,7 @@ const SYSTEM_ROLE_SCOPES: Readonly<Record<string, ScopeType>> = {
   ACCOUNTANT: ScopeType.ALL,
   MANAGER_APPROVER: ScopeType.ALL,
   LEADER: ScopeType.TEAM,
-  EDITOR: ScopeType.SELF,
-  CONTENT_CREATOR: ScopeType.SELF,
+  STAFF: ScopeType.SELF,
 };
 
 const ROLE_INCLUDE = {

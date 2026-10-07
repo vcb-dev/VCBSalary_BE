@@ -126,15 +126,11 @@ const SYSTEM_ROLES: SystemRoleDef[] = [
     name: 'Trưởng nhóm',
     description: 'Quản lý và duyệt dữ liệu team',
   },
+  // Một vai trò chung cho mọi nhân viên; loại công việc (Editor, Content Creator…) là nhóm nghiệp vụ.
   {
-    code: 'EDITOR',
-    name: 'Editor',
+    code: 'STAFF',
+    name: 'Nhân viên',
     description: 'Tự nhập và xác nhận dữ liệu cá nhân',
-  },
-  {
-    code: 'CONTENT_CREATOR',
-    name: 'Content Creator',
-    description: 'Tự nhập và xác nhận dữ liệu cá nhân (khác chức danh Editor)',
   },
 ];
 
@@ -144,14 +140,14 @@ const BASE_EMPLOYEE_GROUPS = [
     name: 'Editor',
     description:
       'Nhân sự dựng video của Marketing, đồng bộ từ AutomationGenVideo.',
-    defaultRoleCode: 'EDITOR',
+    defaultRoleCode: 'STAFF',
     jobTitleKeywords: ['EDITOR', 'BIEN TAP', 'DUNG PHIM'],
   },
   {
     code: 'CONTENT_CREATOR',
     name: 'Content Creator',
     description: 'Vai trò bổ sung cho nhân sự Marketing sản xuất nội dung.',
-    defaultRoleCode: 'CONTENT_CREATOR',
+    defaultRoleCode: 'STAFF',
     jobTitleKeywords: ['CONTENT CREATOR', 'CREATOR', 'SANG TAO NOI DUNG'],
   },
 ];
@@ -231,8 +227,7 @@ const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
   ACCOUNTANT: ACCOUNTANT_PERMISSIONS,
   MANAGER_APPROVER: ADMIN_PERMISSION_CODES,
   LEADER: LEADER_PERMISSIONS,
-  EDITOR: INDIVIDUAL_CONTRIBUTOR_PERMISSIONS,
-  CONTENT_CREATOR: INDIVIDUAL_CONTRIBUTOR_PERMISSIONS,
+  STAFF: INDIVIDUAL_CONTRIBUTOR_PERMISSIONS,
 };
 
 const DEV_PASSWORD = 'Admin@123';
@@ -399,13 +394,13 @@ async function seedDev() {
     {
       email: 'editor@vcbsalary.vn',
       fullName: 'Vũ Thị Biên Tập',
-      roleCode: 'EDITOR',
+      roleCode: 'STAFF',
       scopeType: ScopeType.SELF,
     },
     {
       email: 'creator@vcbsalary.vn',
       fullName: 'Hoàng Văn Sáng Tạo',
-      roleCode: 'CONTENT_CREATOR',
+      roleCode: 'STAFF',
       scopeType: ScopeType.SELF,
     },
   ];
