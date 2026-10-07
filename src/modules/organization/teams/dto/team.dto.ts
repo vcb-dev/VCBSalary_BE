@@ -1,4 +1,5 @@
 import { TeamStatus } from '@prisma/client';
+import { Type } from 'class-transformer';
 import {
   IsEnum,
   IsInt,
@@ -13,6 +14,8 @@ export class CreateTeamDto {
   @MaxLength(150)
   name: string;
 
+  // FE giữ mọi id ở dạng chuỗi (normalizeIds) nên phải ép về number trước khi validate.
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   departmentId: number;
@@ -29,6 +32,7 @@ export class UpdateTeamDto {
   name?: string;
 
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   departmentId?: number;
