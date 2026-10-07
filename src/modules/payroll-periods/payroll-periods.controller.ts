@@ -2,16 +2,20 @@ import {
   Body,
   Controller,
   Get,
+  HttpStatus,
   Param,
   ParseIntPipe,
   Patch,
   Post,
   Query,
 } from '@nestjs/common';
+import { AppException } from '../../common/errors/app.exception';
+import { ErrorCode } from '../../common/errors/error-codes';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthUserPayload } from '../../common/types/auth-user.types';
 import { PaginationQueryDto } from '../../common/utils/pagination.dto';
+import { AuthorizationService } from '../access-control/authorization.service';
 import {
   CreatePayrollPeriodDto,
   ListPayrollPeriodsQueryDto,
@@ -21,7 +25,10 @@ import { PayrollPeriodsService } from './payroll-periods.service';
 
 @Controller('payroll-periods')
 export class PayrollPeriodsController {
-  constructor(private readonly payrollPeriodsService: PayrollPeriodsService) {}
+  constructor(
+    private readonly payrollPeriodsService: PayrollPeriodsService,
+    private readonly authorization: AuthorizationService,
+  ) {}
 
   @Get()
   list(@Query() query: ListPayrollPeriodsQueryDto) {
@@ -86,19 +93,21 @@ export class PayrollPeriodsController {
 
   @RequirePermission('payroll_period.manage')
   @Post(':id/start-review')
-  startReview(
+  async startReview(
     @CurrentUser() user: AuthUserPayload,
     @Param('id', ParseIntPipe) id: number,
   ) {
+    await this.assertGlobalPeriodManagement(user.id);
     return this.payrollPeriodsService.startReview(id, user.id);
   }
 
   @RequirePermission('payroll_period.manage')
   @Post(':id/close')
-  close(
+  async close(
     @CurrentUser() user: AuthUserPayload,
     @Param('id', ParseIntPipe) id: number,
   ) {
+    await this.assertGlobalPeriodManagement(user.id);
     return this.payrollPeriodsService.close(id, user.id);
   }
 
@@ -109,5 +118,19 @@ export class PayrollPeriodsController {
     @Query() query: PaginationQueryDto,
   ) {
     return this.payrollPeriodsService.listEmployeeSnapshots(id, query);
+  }
+
+  private async assertGlobalPeriodManagement(userId: string) {
+    const scope = await this.authorization.resolvePermissionScope(
+      userId,
+      'payroll_period.manage',
+    );
+    if (scope.type !== 'ALL') {
+      throw new AppException(
+        ErrorCode.FORBIDDEN,
+        'Chỉ tài khoản quản lý kỳ lương toàn công ty mới được chuyển trạng thái kỳ',
+        HttpStatus.FORBIDDEN,
+      );
+    }
   }
 }
