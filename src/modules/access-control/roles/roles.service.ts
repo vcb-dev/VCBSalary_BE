@@ -121,13 +121,8 @@ export class RolesService {
     }
 
     const requestedCodes = new Set(dto.permissionCodes);
-    if (requestedCodes.has('revenue.write') && role.code !== 'ACCOUNTANT') {
-      throw new AppException(
-        ErrorCode.VALIDATION_ERROR,
-        'revenue.write chỉ được phép gán cho vai trò Kế toán',
-        HttpStatus.BAD_REQUEST,
-      );
-    }
+    // Vai trò nào cũng được cấp revenue.write (phạm vi nhập theo scope của vai trò); riêng Kế toán
+    // luôn phải giữ để bộ phận tài chính không bị mất quyền nhập vì lỡ tay bỏ tích.
     if (role.code === 'ACCOUNTANT' && !requestedCodes.has('revenue.write')) {
       throw new AppException(
         ErrorCode.VALIDATION_ERROR,
@@ -138,7 +133,6 @@ export class RolesService {
     if (FULL_ACCESS_ROLE_CODES.has(role.code)) {
       const adminRequiredCodes = (
         await this.prisma.permission.findMany({
-          where: { code: { not: 'revenue.write' } },
           select: { code: true },
         })
       ).map(({ code }) => code);

@@ -97,7 +97,7 @@ const PERMISSION_CATALOG: PermissionDef[] = [
 
 const ADMIN_PERMISSION_CODES = PERMISSION_CATALOG.map(
   (permission) => permission.code,
-).filter((code) => code !== 'revenue.write');
+);
 const FULL_ACCESS_ROLE_CODES = ['ADMIN', 'MANAGER_APPROVER'];
 
 const SYSTEM_ROLES: SystemRoleDef[] = [
@@ -114,7 +114,7 @@ const SYSTEM_ROLES: SystemRoleDef[] = [
   {
     code: 'ACCOUNTANT',
     name: 'Kế toán',
-    description: 'Duy nhất có quyền nhập doanh thu chính thức',
+    description: 'Nhập doanh thu chính thức và tính lương',
   },
   {
     code: 'MANAGER_APPROVER',
@@ -197,6 +197,7 @@ const LEADER_PERMISSIONS = [
   'traffic.leader_approve',
   'revenue.view_self',
   'revenue.view_team',
+  'revenue.write',
   'salary.view_self',
   'salary.view_team',
   'salary.bonus',
@@ -277,9 +278,6 @@ async function seedPermissions() {
       })),
       skipDuplicates: true,
     });
-    await prisma.rolePermission.deleteMany({
-      where: { roleId: role.id, permission: { code: 'revenue.write' } },
-    });
   }
 }
 
@@ -310,10 +308,6 @@ async function seedBase() {
       })),
       skipDuplicates: true,
     });
-    if (hasFullAccess)
-      await prisma.rolePermission.deleteMany({
-        where: { roleId: role.id, permission: { code: 'revenue.write' } },
-      });
   }
   const marketing = await prisma.department.upsert({
     where: { code: 'MARKETING' },

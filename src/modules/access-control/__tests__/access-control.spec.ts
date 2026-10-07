@@ -298,20 +298,42 @@ function makeRolesPrismaMock() {
 }
 
 describe('RolesService security invariants', () => {
-  it('does not allow revenue.write on a non-ACCOUNTANT role', async () => {
+  it('allows revenue.write on roles other than ACCOUNTANT', async () => {
     const prisma = makeRolesPrismaMock();
     prisma.role.findUnique.mockResolvedValue({
-      id: 10,
-      code: 'CUSTOM',
-      isSystemRole: false,
+      id: 5,
+      code: 'LEADER',
+      isSystemRole: true,
     });
     prisma.permission.findMany.mockResolvedValue([
       { id: 1, code: 'revenue.write' },
     ]);
     const service = new RolesService(prisma as never);
 
+    await service.setPermissions(5, { permissionCodes: ['revenue.write'] });
+
+    expect(prisma.rolePermission.createMany).toHaveBeenCalledWith({
+      data: [{ roleId: 5, permissionId: 1 }],
+    });
+  });
+
+  it('does not allow ADMIN to lose revenue.write', async () => {
+    const prisma = makeRolesPrismaMock();
+    prisma.role.findUnique.mockResolvedValue({
+      id: 1,
+      code: 'ADMIN',
+      isSystemRole: true,
+    });
+    prisma.permission.findMany
+      .mockResolvedValueOnce([{ id: 1, code: 'role.manage' }])
+      .mockResolvedValueOnce([
+        { code: 'role.manage' },
+        { code: 'revenue.write' },
+      ]);
+    const service = new RolesService(prisma as never);
+
     await expect(
-      service.setPermissions(10, { permissionCodes: ['revenue.write'] }),
+      service.setPermissions(1, { permissionCodes: ['role.manage'] }),
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
     expect(prisma.rolePermission.deleteMany).not.toHaveBeenCalled();
   });
