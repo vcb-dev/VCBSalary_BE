@@ -20,11 +20,14 @@ export class CreateEmployeeDto {
   @MaxLength(200)
   fullName: string;
 
+  // Form tạo nhân sự không còn ô chức danh: bỏ trống thì lấy tên các nhóm nghiệp vụ làm chức danh.
+  @IsOptional()
   @IsString()
   @MaxLength(100)
-  jobTitle: string;
+  jobTitle?: string;
 
-  // Bỏ trống khi tạo = hệ thống tự đoán nhóm theo chức danh (từ khóa khai trong danh mục nhóm).
+  // Bỏ trống nhưng có gửi chức danh = hệ thống tự đoán nhóm theo chức danh (từ khóa khai trong
+  // danh mục nhóm).
   @IsOptional()
   @IsArray()
   @ArrayUnique()

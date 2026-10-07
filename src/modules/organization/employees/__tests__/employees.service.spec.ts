@@ -232,6 +232,108 @@ describe('EmployeesService', () => {
       ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
       expect(prisma.employee.create).not.toHaveBeenCalled();
     });
+
+    it('không gửi chức danh thì lấy tên các nhóm đã chọn làm chức danh', async () => {
+      const prisma = makePrismaMock();
+      prisma.team.findUnique.mockResolvedValue({ id: 1, departmentId: 7 });
+      prisma.employeeGroup.findMany.mockResolvedValue([
+        { id: 2, name: 'Content Creator', status: 'ACTIVE', departmentId: 7 },
+        { id: 1, name: 'Editor', status: 'ACTIVE', departmentId: 7 },
+      ]);
+      prisma.employee.create.mockResolvedValue({ id: 1 });
+      const service = new EmployeesService(
+        prisma as never,
+        makeAuthorizationMock() as never,
+      );
+
+      await service.create({
+        fullName: 'A',
+        teamId: 1,
+        employeeGroupIds: [2, 1],
+      });
+
+      const createArg = firstCallArg<{
+        data: {
+          jobTitle: string;
+          employeeGroups: { connect: { id: number }[] };
+        };
+      }>(prisma.employee.create);
+      expect(createArg.data.jobTitle).toBe('Editor, Content Creator');
+      expect(createArg.data.employeeGroups.connect).toEqual(
+        expect.arrayContaining([{ id: 1 }, { id: 2 }]),
+      );
+    });
+
+    it('không chọn nhóm và không gửi chức danh thì không đoán nhóm', async () => {
+      const prisma = makePrismaMock();
+      prisma.team.findUnique.mockResolvedValue({ id: 1, departmentId: 7 });
+      prisma.employee.create.mockResolvedValue({ id: 1 });
+      const service = new EmployeesService(
+        prisma as never,
+        makeAuthorizationMock() as never,
+      );
+
+      await service.create({ fullName: 'A', teamId: 1 });
+
+      const createArg = firstCallArg<{
+        data: { jobTitle: string; employeeGroups: { connect: unknown[] } };
+      }>(prisma.employee.create);
+      expect(createArg.data.jobTitle).toBe('Chưa phân nhóm');
+      expect(createArg.data.employeeGroups.connect).toEqual([]);
+      expect(prisma.employeeGroup.findMany).not.toHaveBeenCalled();
+    });
+
+    it('đổi nhóm của nhân sự tạo tay thì chức danh đổi theo', async () => {
+      const prisma = makePrismaMock();
+      prisma.employee.findUnique.mockResolvedValue({
+        id: 1,
+        employmentStatus: 'ACTIVE',
+        sourceSystem: null,
+        team: { id: 1, departmentId: 7 },
+        employeeGroups: [{ id: 1 }],
+      });
+      prisma.employeeGroup.findMany.mockResolvedValue([
+        { id: 2, name: 'Content Creator', status: 'ACTIVE', departmentId: 7 },
+      ]);
+      prisma.employee.update.mockResolvedValue({ id: 1 });
+      const service = new EmployeesService(
+        prisma as never,
+        makeAuthorizationMock() as never,
+      );
+
+      await service.update(1, { employeeGroupIds: [2] });
+
+      const update = firstCallArg<{ data: { jobTitle?: string } }>(
+        prisma.employee.update,
+      );
+      expect(update.data.jobTitle).toBe('Content Creator');
+    });
+
+    it('đổi nhóm của nhân sự đồng bộ thì giữ chức danh VCBI cấp', async () => {
+      const prisma = makePrismaMock();
+      prisma.employee.findUnique.mockResolvedValue({
+        id: 1,
+        employmentStatus: 'ACTIVE',
+        sourceSystem: 'AUTOMATION_GEN_VIDEO',
+        team: { id: 1, departmentId: 7 },
+        employeeGroups: [{ id: 1 }],
+      });
+      prisma.employeeGroup.findMany.mockResolvedValue([
+        { id: 1, name: 'Editor', status: 'ACTIVE', departmentId: 7 },
+      ]);
+      prisma.employee.update.mockResolvedValue({ id: 1 });
+      const service = new EmployeesService(
+        prisma as never,
+        makeAuthorizationMock() as never,
+      );
+
+      await service.update(1, { employeeGroupIds: [1] });
+
+      const update = firstCallArg<{ data: { jobTitle?: string } }>(
+        prisma.employee.update,
+      );
+      expect(update.data.jobTitle).toBeUndefined();
+    });
   });
 
   describe('update', () => {

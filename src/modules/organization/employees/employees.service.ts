@@ -148,19 +148,24 @@ export class EmployeesService {
       dto.leaderEmployeeId,
       dto.managerEmployeeId,
     );
-    const employeeGroupIds = dto.employeeGroupIds
+    const groups = dto.employeeGroupIds
       ? await this.assertGroupsAssignable(
           dto.employeeGroupIds,
           team.departmentId,
         )
-      : await this.inferEmployeeGroupIds(dto.jobTitle, team.departmentId);
+      : null;
+    const employeeGroupIds = groups
+      ? groups.map((group) => group.id)
+      : dto.jobTitle
+        ? await this.inferEmployeeGroupIds(dto.jobTitle, team.departmentId)
+        : [];
     const latest = await this.prisma.employee.aggregate({ _max: { id: true } });
     const employeeCode = `NV-${String((latest._max.id ?? 0) + 1).padStart(6, '0')}`;
 
     const data: Prisma.EmployeeCreateInput = {
       employeeCode,
       fullName: dto.fullName,
-      jobTitle: dto.jobTitle,
+      jobTitle: dto.jobTitle ?? jobTitleFromGroups(groups ?? []),
       employeeGroups: { connect: employeeGroupIds.map((id) => ({ id })) },
       team: { connect: { id: dto.teamId } },
       teamMemberships: {
@@ -210,15 +215,25 @@ export class EmployeesService {
       : existing.team;
     // Đổi chức danh mà không gửi nhóm tường minh thì đoán lại theo chức danh mới — giữ nguyên
     // hành vi cũ. Danh mục nhóm được lọc theo phòng ban của team (mới, nếu có đổi team).
-    const employeeGroupIds = dto.employeeGroupIds
+    const groups = dto.employeeGroupIds
       ? await this.assertGroupsAssignable(
           dto.employeeGroupIds,
           team.departmentId,
           existing.employeeGroups.map((group) => group.id),
         )
+      : null;
+    const employeeGroupIds = groups
+      ? groups.map((group) => group.id)
       : dto.jobTitle
         ? await this.inferEmployeeGroupIds(dto.jobTitle, team.departmentId)
         : null;
+    // Nhân sự tạo tay lấy chức danh theo nhóm nên đổi nhóm thì đổi theo; nhân sự đồng bộ giữ
+    // chức danh VCBI cấp (vd "Leader") vì nhóm không thể hiện được vai trò đó.
+    const jobTitle =
+      dto.jobTitle ??
+      (groups && !existing.sourceSystem
+        ? jobTitleFromGroups(groups)
+        : undefined);
     await this.assertHierarchyValid(
       id,
       dto.leaderEmployeeId,
@@ -245,7 +260,7 @@ export class EmployeesService {
         where: { id },
         data: {
           fullName: dto.fullName,
-          jobTitle: dto.jobTitle,
+          jobTitle,
           employeeGroups: employeeGroupIds
             ? { set: employeeGroupIds.map((groupId) => ({ id: groupId })) }
             : undefined,
@@ -623,13 +638,12 @@ export class EmployeesService {
     departmentId: number,
     alreadyAssignedIds: number[] = [],
   ) {
-    await assertEmployeeGroupsAssignable(
+    return assertEmployeeGroupsAssignable(
       this.prisma,
       groupIds,
       [departmentId],
       alreadyAssignedIds,
     );
-    return groupIds;
   }
 
   /**
@@ -694,6 +708,16 @@ export class EmployeesService {
       );
     }
   }
+}
+
+/** Chức danh hiển thị khi không nhập tay: tên các nhóm nghiệp vụ, xếp theo thứ tự tạo nhóm. */
+function jobTitleFromGroups(groups: Array<{ id: number; name: string }>) {
+  if (groups.length === 0) return 'Chưa phân nhóm';
+  return [...groups]
+    .sort((a, b) => a.id - b.id)
+    .map((group) => group.name)
+    .join(', ')
+    .slice(0, 100);
 }
 
 function employeeAuditSnapshot(employee: {
