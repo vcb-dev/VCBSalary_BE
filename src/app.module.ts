@@ -20,6 +20,7 @@ import { RewardConfigModule } from './modules/reward-config/reward-config.module
 import { RevenueModule } from './modules/revenue/revenue.module';
 import { TrafficModule } from './modules/traffic/traffic.module';
 import { SalaryModule } from './modules/salary/salary.module';
+import { TeamPerformanceModule } from './modules/team-performance/team-performance.module';
 import { PrismaModule } from './prisma/prisma.module';
 
 @Module({
@@ -39,6 +40,7 @@ import { PrismaModule } from './prisma/prisma.module';
     RevenueModule,
     TrafficModule,
     SalaryModule,
+    TeamPerformanceModule,
   ],
   controllers: [HealthController],
   providers: [
