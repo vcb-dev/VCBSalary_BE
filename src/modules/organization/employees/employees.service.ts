@@ -14,8 +14,8 @@ import type { ListEmployeesQueryDto } from './dto/list-employees-query.dto';
 import {
   assertEmployeeGroupsAssignable,
   normalizeJobTitle,
-} from '../employee-groups/employee-group.util';
-import { buildEmployeeScopeWhere } from './employee-scope.util';
+} from '../../../common/utils/employee-group.util';
+import { buildEmployeeScopeWhere } from '../../../common/utils/employee-scope.util';
 import { AuditLogService } from '../../audit/audit-log.service';
 
 // Nhóm nghiệp vụ trả kèm nhân sự: FE hiển thị badge + form sửa cần đúng bộ id/tên này.

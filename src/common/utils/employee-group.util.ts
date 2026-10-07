@@ -1,8 +1,8 @@
 import { HttpStatus } from '@nestjs/common';
 import { EmployeeGroupStatus } from '@prisma/client';
-import { AppException } from '../../../common/errors/app.exception';
-import { ErrorCode } from '../../../common/errors/error-codes';
-import type { PrismaService } from '../../../prisma/prisma.service';
+import { AppException } from '../errors/app.exception';
+import { ErrorCode } from '../errors/error-codes';
+import type { PrismaService } from '../../prisma/prisma.service';
 
 /** Bỏ dấu + viết hoa để so khớp chức danh với từ khóa của nhóm nghiệp vụ. */
 export function normalizeJobTitle(value: string) {

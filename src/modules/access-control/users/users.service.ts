@@ -10,7 +10,7 @@ import {
 } from '../../../common/utils/pagination.dto';
 import { PrismaService } from '../../../prisma/prisma.service';
 import type { ResolvedScope } from '../../../common/types/resolved-scope.types';
-import { buildEmployeeScopeWhere } from '../../organization/employees/employee-scope.util';
+import { buildEmployeeScopeWhere } from '../../../common/utils/employee-scope.util';
 import { AuthorizationService } from '../authorization.service';
 import type {
   CreateUserDto,

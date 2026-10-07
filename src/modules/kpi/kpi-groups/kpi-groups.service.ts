@@ -4,7 +4,7 @@ import { AuthorizationService } from '../../access-control/authorization.service
 import { AuditLogService } from '../../audit/audit-log.service';
 import { AppException } from '../../../common/errors/app.exception';
 import { ErrorCode } from '../../../common/errors/error-codes';
-import { assertEmployeeGroupsAssignable } from '../../organization/employee-groups/employee-group.util';
+import { assertEmployeeGroupsAssignable } from '../../../common/utils/employee-group.util';
 import { PrismaService } from '../../../prisma/prisma.service';
 import type { CreateKpiGroupDto, UpdateKpiGroupDto } from './dto/kpi-group.dto';
 import type { CreateKpiItemDto, UpdateKpiItemDto } from './dto/kpi-item.dto';

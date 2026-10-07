@@ -8,7 +8,7 @@ import type {
   ListEmployeeGroupsQueryDto,
   UpdateEmployeeGroupDto,
 } from './dto/employee-group.dto';
-import { normalizeJobTitle } from './employee-group.util';
+import { normalizeJobTitle } from '../../../common/utils/employee-group.util';
 
 const GROUP_INCLUDE = {
   department: true,

@@ -1,5 +1,5 @@
 import type { Prisma } from '@prisma/client';
-import type { ResolvedScope } from '../../../common/types/resolved-scope.types';
+import type { ResolvedScope } from '../types/resolved-scope.types';
 
 /** Empty IN() luôn trả về 0 dòng — an toàn hơn so sánh id với chuỗi không phải UUID. */
 const NO_MATCH: Prisma.EmployeeWhereInput = { id: { in: [] } };
