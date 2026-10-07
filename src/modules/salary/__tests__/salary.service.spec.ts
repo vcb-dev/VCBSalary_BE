@@ -454,6 +454,210 @@ describe('SalaryService list filters', () => {
   });
 });
 
+describe('SalaryService payroll closing readiness', () => {
+  it('summarizes blockers from the latest salary record of each snapshot employee', async () => {
+    const prisma = makePrismaMock();
+    prisma.payrollPeriod.findUnique.mockResolvedValue({
+      id: 2,
+      code: 'LUONG-2026-09',
+      name: 'Kỳ lương tháng 09/2026',
+      status: 'IN_REVIEW',
+      approvalDeadline: null,
+      closedAt: null,
+    });
+    prisma.payrollPeriodEmployeeSnapshot.findMany.mockResolvedValue([
+      {
+        employeeId: 1,
+        employeeCodeSnapshot: 'NV001',
+        employeeNameSnapshot: 'Nhân sự A',
+        jobTitleSnapshot: 'Editor',
+        teamIdSnapshot: 10,
+        teamNameSnapshot: 'Team A',
+        employee: {
+          salaryRecords: [
+            {
+              id: 31,
+              versionNumber: 1,
+              status: 'LOCKED',
+              totalSalaryAmount: decimal(20_000_000),
+              calculationWarnings: [],
+              calculatedAt: new Date('2026-09-30'),
+              approvedAt: new Date('2026-10-01'),
+              lockedAt: new Date('2026-10-01'),
+            },
+          ],
+        },
+      },
+      {
+        employeeId: 2,
+        employeeCodeSnapshot: 'NV002',
+        employeeNameSnapshot: 'Nhân sự B',
+        jobTitleSnapshot: 'Content Creator',
+        teamIdSnapshot: 10,
+        teamNameSnapshot: 'Team A',
+        employee: {
+          salaryRecords: [
+            {
+              id: 32,
+              versionNumber: 1,
+              status: 'WARNING',
+              totalSalaryAmount: decimal(18_000_000),
+              calculationWarnings: [
+                { code: 'REVENUE_MISSING', message: 'Chưa có doanh thu' },
+              ],
+              calculatedAt: new Date('2026-09-30'),
+              approvedAt: null,
+              lockedAt: null,
+            },
+          ],
+        },
+      },
+      {
+        employeeId: 3,
+        employeeCodeSnapshot: 'NV003',
+        employeeNameSnapshot: 'Nhân sự C',
+        jobTitleSnapshot: 'Editor',
+        teamIdSnapshot: 10,
+        teamNameSnapshot: 'Team A',
+        employee: { salaryRecords: [] },
+      },
+    ]);
+
+    const result = await makeService(prisma).getClosingReadiness('admin', 2);
+
+    expect(result).toMatchObject({
+      readyToClose: false,
+      scopeReady: false,
+      scope: 'ALL',
+      capabilities: {
+        canManagePeriod: true,
+        canCalculate: true,
+        canApprove: true,
+      },
+      summary: {
+        employeeCount: 3,
+        lockedCount: 1,
+        warningCount: 1,
+        uncalculatedCount: 1,
+        blockerCount: 2,
+      },
+      closingSummary: {
+        employeeCount: 3,
+        lockedCount: 1,
+        blockerCount: 2,
+      },
+    });
+    expect(result.employees.map((employee) => employee.blocker)).toEqual([
+      null,
+      'WARNING',
+      'UNCALCULATED',
+    ]);
+  });
+
+  it('keeps team readiness separate from the authoritative whole-period closing state', async () => {
+    const prisma = makePrismaMock();
+    prisma.payrollPeriod.findUnique.mockResolvedValue({
+      id: 2,
+      code: 'LUONG-2026-09',
+      name: 'Kỳ lương tháng 09/2026',
+      status: 'IN_REVIEW',
+      approvalDeadline: null,
+      closedAt: null,
+    });
+    prisma.payrollPeriodEmployeeSnapshot.findMany
+      .mockResolvedValueOnce([
+        {
+          employeeId: 1,
+          employeeCodeSnapshot: 'NV001',
+          employeeNameSnapshot: 'Nhân sự A',
+          jobTitleSnapshot: 'Editor',
+          teamIdSnapshot: 10,
+          teamNameSnapshot: 'Team A',
+          employee: {
+            salaryRecords: [
+              {
+                id: 31,
+                versionNumber: 1,
+                status: 'LOCKED',
+                totalSalaryAmount: decimal(20_000_000),
+                calculationWarnings: [],
+                calculatedAt: new Date('2026-09-30'),
+                approvedAt: new Date('2026-10-01'),
+                lockedAt: new Date('2026-10-01'),
+              },
+            ],
+          },
+        },
+      ])
+      .mockResolvedValueOnce([
+        { employee: { salaryRecords: [{ status: 'LOCKED' }] } },
+        { employee: { salaryRecords: [{ status: 'WARNING' }] } },
+      ]);
+    const authorization = {
+      resolvePermissionScope: jest.fn(
+        (_userId: string, permissions: string | readonly string[]) => {
+          if (permissions === 'payroll_period.manage') {
+            return Promise.resolve({ type: 'NONE' });
+          }
+          return Promise.resolve({ type: 'TEAM', teamIds: [10] });
+        },
+      ),
+      getEmployeeId: jest.fn(),
+    };
+    const service = new SalaryService(
+      prisma as never,
+      authorization as never,
+      { record: jest.fn(), notify: jest.fn() } as never,
+    );
+
+    const result = await service.getClosingReadiness('leader-user', 2);
+
+    expect(result).toMatchObject({
+      scope: 'TEAM',
+      scopeReady: true,
+      readyToClose: false,
+      capabilities: {
+        canManagePeriod: false,
+        canCalculate: true,
+        canApprove: true,
+      },
+      summary: { employeeCount: 1, lockedCount: 1, blockerCount: 0 },
+      closingSummary: { employeeCount: 2, lockedCount: 1, blockerCount: 1 },
+    });
+  });
+
+  it('batch approves only latest pending records without warnings', async () => {
+    const prisma = makePrismaMock();
+    prisma.payrollPeriod.findUnique.mockResolvedValue({ status: 'IN_REVIEW' });
+    prisma.salaryRecord.findMany.mockResolvedValue([
+      { id: 41, status: 'PENDING', calculationWarnings: [] },
+      {
+        id: 42,
+        status: 'WARNING',
+        calculationWarnings: [
+          { code: 'KPI_PENDING', message: 'KPI chưa duyệt' },
+        ],
+      },
+      { id: 43, status: 'LOCKED', calculationWarnings: [] },
+    ]);
+    const service = makeService(prisma);
+    const approve = jest
+      .spyOn(service, 'approve')
+      .mockResolvedValue({ id: 41, status: 'LOCKED' } as never);
+
+    const result = await service.approveReady('manager-user', 2);
+
+    expect(approve).toHaveBeenCalledTimes(1);
+    expect(approve).toHaveBeenCalledWith('manager-user', 41);
+    expect(result).toMatchObject({
+      candidateCount: 1,
+      approvedCount: 1,
+      failedCount: 0,
+      approvedIds: [41],
+    });
+  });
+});
+
 function approvalRecord(overrides: Record<string, unknown> = {}) {
   return {
     id: 30,

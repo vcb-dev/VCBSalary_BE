@@ -403,6 +403,259 @@ export class SalaryService {
     );
   }
 
+  /**
+   * Một nguồn dữ liệu duy nhất cho màn hình chốt kỳ. Danh sách dùng đúng snapshot lịch sử và
+   * đúng scope của các quyền vận hành; trạng thái "sẵn sàng đóng" bám chính xác điều kiện của
+   * PayrollPeriodsService.close: bản lương mới nhất của mọi nhân sự phải được LOCKED.
+   */
+  async getClosingReadiness(actorUserId: string, periodId: number) {
+    const actionPermissions = [
+      'payroll_period.manage',
+      'salary.calculate',
+      'salary.final_approve',
+    ] as const;
+    const [scope, manageScope, calculateScope, approveScope] =
+      await Promise.all([
+        this.authorization.resolvePermissionScope(
+          actorUserId,
+          actionPermissions,
+        ),
+        this.authorization.resolvePermissionScope(
+          actorUserId,
+          'payroll_period.manage',
+        ),
+        this.authorization.resolvePermissionScope(
+          actorUserId,
+          'salary.calculate',
+        ),
+        this.authorization.resolvePermissionScope(
+          actorUserId,
+          'salary.final_approve',
+        ),
+      ]);
+    const selfEmployeeId =
+      scope.type === 'SELF'
+        ? await this.authorization.getEmployeeId(actorUserId)
+        : null;
+    const snapshotWhere = this.periodScope.snapshotWhere(scope, selfEmployeeId);
+
+    const [period, snapshots, closingSnapshots] = await Promise.all([
+      this.prisma.payrollPeriod.findUnique({
+        where: { id: periodId },
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          status: true,
+          approvalDeadline: true,
+          closedAt: true,
+        },
+      }),
+      this.prisma.payrollPeriodEmployeeSnapshot.findMany({
+        where: { payrollPeriodId: periodId, AND: [snapshotWhere] },
+        orderBy: { employeeNameSnapshot: 'asc' },
+        select: {
+          employeeId: true,
+          employeeCodeSnapshot: true,
+          employeeNameSnapshot: true,
+          jobTitleSnapshot: true,
+          teamIdSnapshot: true,
+          teamNameSnapshot: true,
+          employee: {
+            select: {
+              salaryRecords: {
+                where: { payrollPeriodId: periodId },
+                orderBy: { versionNumber: 'desc' },
+                take: 1,
+                select: {
+                  id: true,
+                  versionNumber: true,
+                  status: true,
+                  totalSalaryAmount: true,
+                  calculationWarnings: true,
+                  calculatedAt: true,
+                  approvedAt: true,
+                  lockedAt: true,
+                },
+              },
+            },
+          },
+        },
+      }),
+      scope.type === 'ALL'
+        ? Promise.resolve(null)
+        : this.prisma.payrollPeriodEmployeeSnapshot.findMany({
+            where: { payrollPeriodId: periodId },
+            select: {
+              employee: {
+                select: {
+                  salaryRecords: {
+                    where: { payrollPeriodId: periodId },
+                    orderBy: { versionNumber: 'desc' },
+                    take: 1,
+                    select: { status: true },
+                  },
+                },
+              },
+            },
+          }),
+    ]);
+    if (!period) {
+      throw new AppException(
+        ErrorCode.NOT_FOUND,
+        'Không tìm thấy kỳ lương',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    const employees = snapshots.map((snapshot) => {
+      const record = snapshot.employee.salaryRecords[0] ?? null;
+      const warnings = record
+        ? this.readWarnings(record.calculationWarnings)
+        : [];
+      const blocker = !record
+        ? 'UNCALCULATED'
+        : record.status === SalaryRecordStatus.WARNING
+          ? 'WARNING'
+          : record.status === SalaryRecordStatus.PENDING
+            ? 'PENDING_APPROVAL'
+            : record.status === SalaryRecordStatus.SUPERSEDED
+              ? 'NEEDS_REVISION'
+              : null;
+      return {
+        employeeId: snapshot.employeeId,
+        employeeCode: snapshot.employeeCodeSnapshot,
+        employeeName: snapshot.employeeNameSnapshot,
+        jobTitle: snapshot.jobTitleSnapshot,
+        teamId: snapshot.teamIdSnapshot,
+        teamName: snapshot.teamNameSnapshot,
+        salaryRecord: record
+          ? {
+              id: record.id,
+              versionNumber: record.versionNumber,
+              status: record.status,
+              totalSalaryAmount: record.totalSalaryAmount.toFixed(0),
+              warningCount: warnings.length,
+              warnings,
+              calculatedAt: record.calculatedAt,
+              approvedAt: record.approvedAt,
+              lockedAt: record.lockedAt,
+            }
+          : null,
+        blocker,
+      };
+    });
+
+    const summary = closingReadinessSummary(
+      employees.map((employee) => employee.salaryRecord?.status ?? null),
+    );
+    const closingSummary = closingSnapshots
+      ? closingReadinessSummary(
+          closingSnapshots.map(
+            (snapshot) => snapshot.employee.salaryRecords[0]?.status ?? null,
+          ),
+        )
+      : summary;
+
+    return {
+      period,
+      scope: scope.type,
+      capabilities: {
+        // Kỳ lương là tài nguyên toàn công ty: scope TEAM/SELF không được chuyển trạng thái kỳ.
+        canManagePeriod: manageScope.type === 'ALL',
+        canCalculate: calculateScope.type !== 'NONE',
+        canApprove: approveScope.type !== 'NONE',
+      },
+      scopeReady:
+        period.status === PayrollPeriodStatus.IN_REVIEW &&
+        summary.blockerCount === 0,
+      readyToClose:
+        period.status === PayrollPeriodStatus.IN_REVIEW &&
+        closingSummary.blockerCount === 0,
+      summary,
+      closingSummary,
+      employees,
+    };
+  }
+
+  /** Duyệt hàng loạt đúng các bản lương mới nhất đang PENDING trong phạm vi của người duyệt. */
+  async approveReady(actorUserId: string, periodId: number) {
+    const period = await this.prisma.payrollPeriod.findUnique({
+      where: { id: periodId },
+      select: { status: true },
+    });
+    if (!period) {
+      throw new AppException(
+        ErrorCode.NOT_FOUND,
+        'Không tìm thấy kỳ lương',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+    if (period.status !== PayrollPeriodStatus.IN_REVIEW) {
+      throw new AppException(
+        ErrorCode.VALIDATION_ERROR,
+        'Chỉ duyệt hàng loạt khi kỳ lương đang ở giai đoạn duyệt',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    const scope = await this.authorization.resolvePermissionScope(
+      actorUserId,
+      'salary.final_approve',
+    );
+    const selfEmployeeId =
+      scope.type === 'SELF'
+        ? await this.authorization.getEmployeeId(actorUserId)
+        : null;
+    const employeeIds = await this.periodScope.resolveEmployeeIds(
+      scope,
+      periodId,
+      selfEmployeeId,
+    );
+    const latestRecords = await this.prisma.salaryRecord.findMany({
+      where: {
+        payrollPeriodId: periodId,
+        employeeId: employeeIds === 'ALL' ? undefined : { in: employeeIds },
+      },
+      orderBy: [{ employeeId: 'asc' }, { versionNumber: 'desc' }],
+      distinct: ['employeeId'],
+      select: {
+        id: true,
+        status: true,
+        calculationWarnings: true,
+      },
+    });
+    const readyIds = latestRecords
+      .filter(
+        (record) =>
+          record.status === SalaryRecordStatus.PENDING &&
+          this.readWarnings(record.calculationWarnings).length === 0,
+      )
+      .map((record) => record.id);
+
+    const approvedIds: number[] = [];
+    const failed: Array<{ id: number; message: string }> = [];
+    await forEachConcurrent(readyIds, SALARY_BATCH_CONCURRENCY, async (id) => {
+      try {
+        await this.approve(actorUserId, id);
+        approvedIds.push(id);
+      } catch (error) {
+        failed.push({
+          id,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
+
+    return {
+      candidateCount: readyIds.length,
+      approvedCount: approvedIds.length,
+      failedCount: failed.length,
+      approvedIds,
+      failed,
+    };
+  }
+
   async getOne(actorUserId: string, id: number) {
     const record = await this.prisma.salaryRecord.findUnique({
       where: { id },
@@ -1943,4 +2196,25 @@ export class SalaryService {
   private readWarnings(value: Prisma.JsonValue): SalaryWarning[] {
     return Array.isArray(value) ? (value as SalaryWarning[]) : [];
   }
+}
+
+function closingReadinessSummary(statuses: Array<SalaryRecordStatus | null>) {
+  const lockedCount = statuses.filter(
+    (status) => status === SalaryRecordStatus.LOCKED,
+  ).length;
+  return {
+    employeeCount: statuses.length,
+    lockedCount,
+    pendingApprovalCount: statuses.filter(
+      (status) => status === SalaryRecordStatus.PENDING,
+    ).length,
+    warningCount: statuses.filter(
+      (status) => status === SalaryRecordStatus.WARNING,
+    ).length,
+    uncalculatedCount: statuses.filter((status) => status === null).length,
+    needsRevisionCount: statuses.filter(
+      (status) => status === SalaryRecordStatus.SUPERSEDED,
+    ).length,
+    blockerCount: statuses.length - lockedCount,
+  };
 }

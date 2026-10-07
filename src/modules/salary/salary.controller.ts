@@ -63,6 +63,28 @@ export class PayrollPeriodSalaryController {
   ) {
     return this.salaryService.list(user.id, periodId, query);
   }
+
+  @RequirePermission(
+    'payroll_period.manage',
+    'salary.calculate',
+    'salary.final_approve',
+  )
+  @Get(':periodId/closing-readiness')
+  getClosingReadiness(
+    @CurrentUser() user: AuthUserPayload,
+    @Param('periodId', ParseIntPipe) periodId: number,
+  ) {
+    return this.salaryService.getClosingReadiness(user.id, periodId);
+  }
+
+  @RequirePermission('salary.final_approve')
+  @Post(':periodId/salaries/approve-ready')
+  approveReady(
+    @CurrentUser() user: AuthUserPayload,
+    @Param('periodId', ParseIntPipe) periodId: number,
+  ) {
+    return this.salaryService.approveReady(user.id, periodId);
+  }
 }
 
 @Controller('salary-records')
