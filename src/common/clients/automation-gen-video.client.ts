@@ -125,6 +125,17 @@ export type AutomationGenVideoTrafficQuery = {
 
 export type AutomationGenVideoTaskComplianceSource = 'AUTO_A4' | 'DAILY_PLAN';
 
+/** Trạng thái hiện tại của task, nên có thể là task nộp bù sau khi đã chốt số thiếu. */
+export interface AutomationGenVideoTaskComplianceTask {
+  id: string;
+  title: string | null;
+  product_name: string | null;
+  status: string;
+  deadline: string | null;
+  submitted_at: string | null;
+  on_time: boolean;
+}
+
 export interface AutomationGenVideoTaskComplianceRecord {
   id: string;
   user_id: string;
@@ -139,6 +150,31 @@ export interface AutomationGenVideoTaskComplianceRecord {
   missing_count: number;
   deadline: string;
   evaluated_at: string;
+  /** Phần thiếu không ứng với task nào: kế hoạch tuyến là task chưa tạo, A4 là task đã huỷ/xoá. */
+  untracked_missing: number;
+  tasks: AutomationGenVideoTaskComplianceTask[];
+}
+
+export interface AutomationGenVideoTaskComplianceCounts {
+  expected: number;
+  completed: number;
+  missing: number;
+}
+
+/** Một dòng người × ngày của màn "Nhiệm vụ còn thiếu" bên VCBI. */
+export interface AutomationGenVideoTaskComplianceDay {
+  key: string;
+  work_date: string;
+  user_id: string;
+  employee_id: string | null;
+  user_name: string;
+  /** Chỉ cộng các tuyến thiếu. */
+  expected_count: number;
+  completed_count: number;
+  missing_count: number;
+  /** Cộng mọi tuyến đã chốt của ngày, kể cả tuyến đủ. */
+  day_total: AutomationGenVideoTaskComplianceCounts;
+  lines: AutomationGenVideoTaskComplianceRecord[];
 }
 
 export interface AutomationGenVideoTaskComplianceResponse {
@@ -147,7 +183,7 @@ export interface AutomationGenVideoTaskComplianceResponse {
   timezone: string;
   range: { from: string; to: string };
   team: { id: string; name: string };
-  filters: { user_id: string | null };
+  filters: { user_id: string | null; group_by: 'person_day' };
   coverage: {
     snapshot_count: number;
     evaluated_from: string | null;
@@ -160,7 +196,13 @@ export interface AutomationGenVideoTaskComplianceResponse {
     affected_days: number;
     affected_records: number;
   };
+  /** Tổng chỉ trên các tuyến bị thiếu, không phải tỷ lệ hoàn thành của cả kỳ. */
+  shortfall_summary: AutomationGenVideoTaskComplianceCounts & {
+    person_days: number;
+    lines: number;
+  };
   records: AutomationGenVideoTaskComplianceRecord[];
+  days: AutomationGenVideoTaskComplianceDay[];
   pagination: {
     page: number;
     limit: number;
@@ -364,6 +406,9 @@ export class AutomationGenVideoClient {
   /**
    * Đọc snapshot tuân thủ nhiệm vụ đã chốt bên VCBI cho đúng một nhân sự/team.
    * Salary chỉ hiển thị dữ liệu này để đánh giá; không sao chép vào cơ sở dữ liệu lương.
+   *
+   * Luôn gọi `group_by=person_day` (contract 1.1): phân trang theo ngày và mỗi ngày kèm mọi tuyến
+   * cùng task, đúng như màn "Nhiệm vụ còn thiếu" bên VCBI nên số liệu hai bên trùng nhau.
    */
   async fetchTaskComplianceForPayrollSync(
     externalTeamId: string,
@@ -374,6 +419,7 @@ export class AutomationGenVideoClient {
       from: query.dateFrom,
       to: query.dateTo,
       user_id: query.externalUserId,
+      group_by: 'person_day',
       page: String(query.page),
       limit: String(query.limit),
     });
@@ -398,6 +444,14 @@ export class AutomationGenVideoClient {
     }
 
     const payload: unknown = await response.json();
+    // Bản 1.0 bỏ qua group_by nên không có days[]; báo rõ để không tưởng nhầm là dữ liệu hỏng.
+    if (isRecord(payload) && payload.contract_version === '1.0') {
+      throw new AppException(
+        ErrorCode.INTERNAL_ERROR,
+        'VCBI đang chạy bản cũ của API tuân thủ nhiệm vụ (1.0), cần cập nhật lên 1.1',
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
     if (!isTaskComplianceResponse(payload)) {
       throw new AppException(
         ErrorCode.INTERNAL_ERROR,
@@ -438,6 +492,7 @@ function isTaskComplianceResponse(
 ): value is AutomationGenVideoTaskComplianceResponse {
   if (!isRecord(value)) return false;
   const summary = value.summary;
+  const shortfall = value.shortfall_summary;
   const coverage = value.coverage;
   const pagination = value.pagination;
   const range = value.range;
@@ -461,6 +516,9 @@ function isTaskComplianceResponse(
     typeof summary.missing === 'number' &&
     typeof summary.affected_days === 'number' &&
     typeof summary.affected_records === 'number' &&
+    isComplianceCounts(shortfall) &&
+    typeof shortfall.person_days === 'number' &&
+    typeof shortfall.lines === 'number' &&
     isRecord(coverage) &&
     typeof coverage.snapshot_count === 'number' &&
     (coverage.evaluated_from === null ||
@@ -469,6 +527,8 @@ function isTaskComplianceResponse(
       typeof coverage.evaluated_through === 'string') &&
     Array.isArray(value.records) &&
     value.records.every(isTaskComplianceRecord) &&
+    Array.isArray(value.days) &&
+    value.days.every(isTaskComplianceDay) &&
     isRecord(pagination) &&
     typeof pagination.page === 'number' &&
     typeof pagination.limit === 'number' &&
@@ -507,6 +567,53 @@ function isTaskComplianceRecord(
     typeof value.completed_count === 'number' &&
     typeof value.missing_count === 'number' &&
     typeof value.deadline === 'string' &&
-    typeof value.evaluated_at === 'string'
+    typeof value.evaluated_at === 'string' &&
+    typeof value.untracked_missing === 'number' &&
+    Array.isArray(value.tasks) &&
+    value.tasks.every(isTaskComplianceTask)
+  );
+}
+
+function isTaskComplianceTask(
+  value: unknown,
+): value is AutomationGenVideoTaskComplianceTask {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    (value.title === null || typeof value.title === 'string') &&
+    (value.product_name === null || typeof value.product_name === 'string') &&
+    typeof value.status === 'string' &&
+    (value.deadline === null || typeof value.deadline === 'string') &&
+    (value.submitted_at === null || typeof value.submitted_at === 'string') &&
+    typeof value.on_time === 'boolean'
+  );
+}
+
+function isComplianceCounts(
+  value: unknown,
+): value is Record<string, unknown> & AutomationGenVideoTaskComplianceCounts {
+  return (
+    isRecord(value) &&
+    typeof value.expected === 'number' &&
+    typeof value.completed === 'number' &&
+    typeof value.missing === 'number'
+  );
+}
+
+function isTaskComplianceDay(
+  value: unknown,
+): value is AutomationGenVideoTaskComplianceDay {
+  return (
+    isRecord(value) &&
+    typeof value.key === 'string' &&
+    typeof value.work_date === 'string' &&
+    typeof value.user_id === 'string' &&
+    typeof value.user_name === 'string' &&
+    typeof value.expected_count === 'number' &&
+    typeof value.completed_count === 'number' &&
+    typeof value.missing_count === 'number' &&
+    isComplianceCounts(value.day_total) &&
+    Array.isArray(value.lines) &&
+    value.lines.every(isTaskComplianceRecord)
   );
 }
