@@ -67,6 +67,17 @@ type EmployeeReadiness = {
   employees: MembershipIssue[];
 };
 
+type PreviousKpiTargets = {
+  sourcePeriodCode: string | null;
+  periodTargets: Array<{ kpiItemId: number; targetValue: Prisma.Decimal }>;
+  employeeTargets: Array<{
+    employeeId: number;
+    teamId: number;
+    kpiItemId: number;
+    targetValue: Prisma.Decimal;
+  }>;
+};
+
 // ALL: soi toàn bộ nhân sự còn làm việc (kỳ DRAFT sắp mở) · MISSING: chỉ người chưa snapshot
 // (kỳ OPEN sắp đồng bộ) · NONE: kỳ đã qua giai đoạn snapshot nên không còn gì để kiểm.
 type MembershipCheckScope = 'ALL' | 'MISSING' | 'NONE';
@@ -440,6 +451,14 @@ export class PayrollPeriodsService
           .map((group) => ({ employee, membership, group })),
       ),
     );
+    const previousTargets = await this.loadPreviousKpiTargets(
+      period,
+      automaticAssignments.map(({ employee, membership, group }) => ({
+        employeeId: employee.id,
+        teamId: membership.teamId,
+        kpiGroupId: group.id,
+      })),
+    );
 
     return this.prisma.$transaction(async (tx) => {
       const claimed = await tx.payrollPeriod.updateMany({
@@ -544,6 +563,31 @@ export class PayrollPeriodsService
         }
       }
 
+      // Bản chép giữ nguồn MANUAL mặc định: leader vẫn sửa được, còn đồng bộ VCBI upsert ghi đè
+      // ngay khi nguồn có target (nguồn trả target rỗng thì sync giữ nguyên giá trị đã chép).
+      const copiedPeriodTargets =
+        previousTargets.periodTargets.length > 0
+          ? await tx.kpiPeriodTarget.createMany({
+              data: previousTargets.periodTargets.map((target) => ({
+                ...target,
+                payrollPeriodId: id,
+                createdByUserId: actorUserId,
+              })),
+              skipDuplicates: true,
+            })
+          : { count: 0 };
+      const copiedEmployeeTargets =
+        previousTargets.employeeTargets.length > 0
+          ? await tx.employeeKpiTarget.createMany({
+              data: previousTargets.employeeTargets.map((target) => ({
+                ...target,
+                payrollPeriodId: id,
+                createdByUserId: actorUserId,
+              })),
+              skipDuplicates: true,
+            })
+          : { count: 0 };
+
       await this.auditLog.record(tx, {
         actorUserId,
         action: 'PAYROLL_PERIOD_OPENED',
@@ -555,6 +599,9 @@ export class PayrollPeriodsService
           status: PayrollPeriodStatus.OPEN,
           snapshotEmployeeCount: employees.length,
           automaticKpiAssignmentCount: automaticAssignments.length,
+          kpiTargetSourcePeriodCode: previousTargets.sourcePeriodCode,
+          copiedKpiPeriodTargetCount: copiedPeriodTargets.count,
+          copiedEmployeeKpiTargetCount: copiedEmployeeTargets.count,
           rewardRuleSetId: activeRuleSet.id,
           rewardRuleSetVersion: activeRuleSet.version,
         },
@@ -563,8 +610,88 @@ export class PayrollPeriodsService
       return {
         ...updated,
         automaticKpiAssignmentCount: automaticAssignments.length,
+        copiedKpiTargetCount:
+          copiedPeriodTargets.count + copiedEmployeeTargets.count,
       };
     });
+  }
+
+  /**
+   * KPI của nhân sự hiếm khi đổi giữa các tháng, nên kỳ mới lấy mục tiêu gốc của kỳ gần nhất
+   * trước đó làm giá trị khởi tạo. Chỉ chép đầu mục cấu hình nội bộ còn active, và với mục tiêu
+   * riêng thì chỉ khi (nhân sự, team, nhóm KPI) vừa được tự gán lại trong kỳ mới. KPI riêng từ
+   * VCBI (externalItemId) do đồng bộ tự tạo theo từng tháng nên không chép; giá trị điều chỉnh
+   * (override) gắn với lý do của kỳ cũ nên cũng không mang sang.
+   */
+  private async loadPreviousKpiTargets(
+    period: { payrollYear: number; payrollMonth: number },
+    assignments: Array<{
+      employeeId: number;
+      teamId: number;
+      kpiGroupId: number;
+    }>,
+  ): Promise<PreviousKpiTargets> {
+    const previous = await this.prisma.payrollPeriod.findFirst({
+      where: {
+        status: { not: PayrollPeriodStatus.DRAFT },
+        OR: [
+          { payrollYear: { lt: period.payrollYear } },
+          {
+            payrollYear: period.payrollYear,
+            payrollMonth: { lt: period.payrollMonth },
+          },
+        ],
+      },
+      orderBy: [{ payrollYear: 'desc' }, { payrollMonth: 'desc' }],
+      select: { id: true, code: true },
+    });
+    if (!previous) {
+      return { sourcePeriodCode: null, periodTargets: [], employeeTargets: [] };
+    }
+
+    const copyableItem: Prisma.KpiItemWhereInput = {
+      isActive: true,
+      externalItemId: null,
+      kpiGroup: { isActive: true },
+    };
+    const [periodTargets, employeeTargets] = await Promise.all([
+      this.prisma.kpiPeriodTarget.findMany({
+        where: { payrollPeriodId: previous.id, kpiItem: copyableItem },
+        select: { kpiItemId: true, targetValue: true },
+      }),
+      this.prisma.employeeKpiTarget.findMany({
+        where: { payrollPeriodId: previous.id, kpiItem: copyableItem },
+        select: {
+          employeeId: true,
+          teamId: true,
+          kpiItemId: true,
+          targetValue: true,
+          kpiItem: { select: { kpiGroupId: true } },
+        },
+      }),
+    ]);
+    const assigned = new Set(
+      assignments.map(
+        (assignment) =>
+          `${assignment.employeeId}:${assignment.teamId}:${assignment.kpiGroupId}`,
+      ),
+    );
+    return {
+      sourcePeriodCode: previous.code,
+      periodTargets,
+      employeeTargets: employeeTargets
+        .filter((target) =>
+          assigned.has(
+            `${target.employeeId}:${target.teamId}:${target.kpiItem.kpiGroupId}`,
+          ),
+        )
+        .map(({ employeeId, teamId, kpiItemId, targetValue }) => ({
+          employeeId,
+          teamId,
+          kpiItemId,
+          targetValue,
+        })),
+    };
   }
 
   /**

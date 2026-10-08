@@ -36,6 +36,14 @@ interface PrismaMock {
   employeeKpiActual: {
     createMany: jest.Mock;
   };
+  kpiPeriodTarget: {
+    findMany: jest.Mock;
+    createMany: jest.Mock;
+  };
+  employeeKpiTarget: {
+    findMany: jest.Mock;
+    createMany: jest.Mock;
+  };
   salaryRecord: {
     findMany: jest.Mock;
   };
@@ -81,6 +89,14 @@ function makePrismaMock(): PrismaMock {
       createMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     employeeKpiActual: {
+      createMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
+    kpiPeriodTarget: {
+      findMany: jest.fn().mockResolvedValue([]),
+      createMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
+    employeeKpiTarget: {
+      findMany: jest.fn().mockResolvedValue([]),
       createMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     salaryRecord: {
@@ -490,6 +506,156 @@ describe('PayrollPeriodsService', () => {
           expect.objectContaining({ kpiItemId: 'item-manual' }),
         ]),
       );
+      // Không có kỳ trước thì không chép mục tiêu nào.
+      expect(prisma.employeeKpiTarget.createMany).not.toHaveBeenCalled();
+      expect(prisma.kpiPeriodTarget.createMany).not.toHaveBeenCalled();
+    });
+
+    it('chép mục tiêu gốc của kỳ trước cho đúng (nhân sự, team, nhóm KPI) vừa được tự gán', async () => {
+      const prisma = makePrismaMock();
+      prisma.payrollPeriod.findUnique.mockResolvedValue({
+        id: 'p1',
+        status: 'DRAFT',
+        payrollYear: 2026,
+        payrollMonth: 1,
+      });
+      prisma.payrollPeriod.findUniqueOrThrow.mockResolvedValue({
+        id: 'p1',
+        status: 'OPEN',
+      });
+      prisma.payrollPeriod.findFirst.mockResolvedValue({
+        id: 'p-prev',
+        code: 'LUONG-2025-12',
+      });
+      prisma.employee.findMany.mockResolvedValue([
+        {
+          id: 'editor-1',
+          employeeCode: 'ED-01',
+          fullName: 'Editor A',
+          jobTitle: 'Video Editor',
+          employeeGroups: [{ id: 1, code: 'EDITOR' }],
+          teamId: 't1',
+          team: { code: 'TEAM-A', name: 'Team A' },
+          leaderEmployeeId: null,
+          leader: null,
+          managerEmployeeId: null,
+          manager: null,
+          employmentStatus: 'ACTIVE',
+          teamMemberships: [
+            {
+              id: 'm-editor',
+              teamId: 't1',
+              team: { code: 'TEAM-A', name: 'Team A' },
+              isPrimary: true,
+              defaultSalaryWeightPercent: 100,
+              leaderEmployeeId: null,
+              leader: null,
+              managerEmployeeId: null,
+              manager: null,
+            },
+          ],
+        },
+      ]);
+      prisma.kpiGroup.findMany.mockResolvedValue([
+        {
+          id: 'group-editor',
+          applicableEmployeeGroups: [{ id: 1 }],
+          items: [{ id: 'item-video' }],
+        },
+      ]);
+      prisma.kpiPeriodTarget.findMany.mockResolvedValue([
+        { kpiItemId: 'item-video', targetValue: 20 },
+      ]);
+      prisma.employeeKpiTarget.findMany.mockResolvedValue([
+        {
+          employeeId: 'editor-1',
+          teamId: 't1',
+          kpiItemId: 'item-video',
+          targetValue: 30,
+          kpiItem: { kpiGroupId: 'group-editor' },
+        },
+        // Kỳ trước còn ở team khác → bối cảnh KPI khác, không chép.
+        {
+          employeeId: 'editor-1',
+          teamId: 't-old',
+          kpiItemId: 'item-video',
+          targetValue: 40,
+          kpiItem: { kpiGroupId: 'group-editor' },
+        },
+        // Nhóm KPI không còn được tự gán trong kỳ mới → không chép.
+        {
+          employeeId: 'editor-1',
+          teamId: 't1',
+          kpiItemId: 'item-content',
+          targetValue: 5,
+          kpiItem: { kpiGroupId: 'group-content' },
+        },
+      ]);
+      prisma.kpiPeriodTarget.createMany.mockResolvedValue({ count: 1 });
+      prisma.employeeKpiTarget.createMany.mockResolvedValue({ count: 1 });
+      const auditLog = makeAuditLogMock();
+      const service = new PayrollPeriodsService(
+        prisma as never,
+        auditLog as never,
+      );
+
+      const result = await service.open('p1', 'user-admin');
+
+      expect(result).toEqual(
+        expect.objectContaining({ copiedKpiTargetCount: 2 }),
+      );
+      // Kỳ nguồn: kỳ gần nhất TRƯỚC kỳ đang mở và đã từng mở (bỏ qua DRAFT).
+      expect(firstCallArg(prisma.payrollPeriod.findFirst)).toMatchObject({
+        where: {
+          status: { not: 'DRAFT' },
+          OR: [
+            { payrollYear: { lt: 2026 } },
+            { payrollYear: 2026, payrollMonth: { lt: 1 } },
+          ],
+        },
+        orderBy: [{ payrollYear: 'desc' }, { payrollMonth: 'desc' }],
+      });
+      // KPI riêng từ VCBI do sync tự tạo theo tháng nên không nằm trong tập được chép.
+      expect(firstCallArg(prisma.employeeKpiTarget.findMany)).toMatchObject({
+        where: {
+          payrollPeriodId: 'p-prev',
+          kpiItem: { isActive: true, externalItemId: null },
+        },
+      });
+      expect(
+        firstCallArg<{ data: unknown[] }>(prisma.kpiPeriodTarget.createMany)
+          .data,
+      ).toEqual([
+        {
+          kpiItemId: 'item-video',
+          targetValue: 20,
+          payrollPeriodId: 'p1',
+          createdByUserId: 'user-admin',
+        },
+      ]);
+      // Chỉ mang mục tiêu gốc, không mang override; nguồn để mặc định MANUAL để sync VCBI ghi đè.
+      expect(
+        firstCallArg<{ data: unknown[] }>(prisma.employeeKpiTarget.createMany)
+          .data,
+      ).toEqual([
+        {
+          employeeId: 'editor-1',
+          teamId: 't1',
+          kpiItemId: 'item-video',
+          targetValue: 30,
+          payrollPeriodId: 'p1',
+          createdByUserId: 'user-admin',
+        },
+      ]);
+      const auditCalls = auditLog.record.mock.calls as [unknown, unknown][];
+      expect(auditCalls[0][1]).toMatchObject({
+        action: 'PAYROLL_PERIOD_OPENED',
+        afterData: {
+          kpiTargetSourcePeriodCode: 'LUONG-2025-12',
+          copiedKpiPeriodTargetCount: 1,
+          copiedEmployeeKpiTargetCount: 1,
+        },
+      });
     });
 
     it('is idempotent: opening an already-OPEN period is rejected without creating duplicate snapshots', async () => {

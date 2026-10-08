@@ -319,6 +319,8 @@ describe('KpiSyncService', () => {
       { update: Record<string, unknown> },
     ][];
     expect(targetCalls[0][0].update.targetValue).toBe(150);
+    // Mục tiêu chép từ kỳ trước (nguồn MANUAL) cũng bị thay hẳn bằng số của VCBI.
+    expect(targetCalls[0][0].update.dataSource).toBe('AUTOMATION_GEN_VIDEO');
     expect(targetCalls[0][0].update).not.toHaveProperty('overrideValue');
     expect(targetCalls[0][0].update).not.toHaveProperty('overrideReason');
     expect(prisma.employeeKpiTarget.findMany).toHaveBeenCalledTimes(1);
