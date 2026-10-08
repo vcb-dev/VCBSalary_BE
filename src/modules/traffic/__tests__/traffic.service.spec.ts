@@ -6,6 +6,7 @@ function trafficRecord(overrides: Record<string, unknown> = {}) {
     employeeId: 1,
     payrollPeriodId: 2,
     platform: 'TIKTOK',
+    platformName: '',
     views: 12500000n,
     selfConfirmationStatus: 'DRAFT',
     selfConfirmedByUserId: null,
@@ -61,6 +62,7 @@ function makePrismaMock() {
       findUniqueOrThrow: jest.fn().mockResolvedValue(trafficRecord()),
       create: jest.fn().mockResolvedValue(trafficRecord()),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     trafficRecordAttachment: {
       deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -172,6 +174,7 @@ describe('TrafficService', () => {
         employeeId: 1,
         payrollPeriodId: 2,
         platform: 'TIKTOK',
+        platformName: '',
         views: 12500000n,
       },
     });
@@ -336,5 +339,187 @@ describe('TrafficService', () => {
     await expect(
       service.upsert('employee-user', 2, 1, 'INSTAGRAM', { views: '10' }),
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+});
+
+describe('TrafficService custom platforms', () => {
+  function makeService(prisma = makePrismaMock()) {
+    const auditLog = makeAuditLogMock();
+    const service = new TrafficService(
+      prisma as never,
+      makeAuthorizationMock({
+        employeeId: 1,
+        permissions: ['traffic.write_self'],
+      }) as never,
+      auditLog as never,
+      makeFilesMock() as never,
+    );
+    return { prisma, auditLog, service };
+  }
+
+  it('lists custom platforms after the four fixed platforms with their own name', async () => {
+    const { prisma, service } = makeService();
+    prisma.employeeTrafficRecord.findMany.mockResolvedValue([
+      trafficRecord({ id: 30, platform: 'OTHER', platformName: 'Threads' }),
+      trafficRecord({ id: 11, platform: 'YOUTUBE', views: 50n }),
+    ]);
+
+    const result = await service.getForEmployee('employee-user', 2, 1);
+
+    expect(result.records.map((record) => record.platform)).toEqual([
+      'TIKTOK',
+      'FACEBOOK',
+      'YOUTUBE',
+      'INSTAGRAM',
+      'OTHER',
+    ]);
+    expect(result.records[4]).toMatchObject({
+      id: 30,
+      platformName: 'Threads',
+    });
+    expect(result.records[2].platformName).toBeNull();
+  });
+
+  it('creates a custom platform row keyed by its name', async () => {
+    const { prisma, auditLog, service } = makeService();
+    prisma.employeeTrafficRecord.findUniqueOrThrow.mockResolvedValue(
+      trafficRecord({ id: 30, platform: 'OTHER', platformName: 'Threads' }),
+    );
+
+    const result = await service.createCustom('employee-user', 2, 1, {
+      platformName: 'Threads',
+      views: '3000',
+    });
+
+    expect(prisma.employeeTrafficRecord.create).toHaveBeenCalledWith({
+      data: {
+        employeeId: 1,
+        payrollPeriodId: 2,
+        platform: 'OTHER',
+        platformName: 'Threads',
+        views: 3000n,
+      },
+    });
+    const audit = callArg<{
+      action: string;
+      afterData: { platformName: string };
+    }>(auditLog.record, 1);
+    expect(audit.action).toBe('TRAFFIC_CREATED');
+    expect(audit.afterData.platformName).toBe('Threads');
+    expect(result.platformName).toBe('Threads');
+  });
+
+  it('rejects a custom name that differs only by letter case', async () => {
+    const { prisma, service } = makeService();
+    prisma.employeeTrafficRecord.findMany.mockResolvedValue([
+      { platformName: 'Threads' },
+    ]);
+
+    await expect(
+      service.createCustom('employee-user', 2, 1, {
+        platformName: 'threads',
+        views: '10',
+      }),
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(prisma.employeeTrafficRecord.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects a custom name that duplicates a fixed platform', async () => {
+    const { prisma, service } = makeService();
+
+    await expect(
+      service.createCustom('employee-user', 2, 1, {
+        platformName: 'TikTok',
+        views: '10',
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    expect(prisma.employeeTrafficRecord.create).not.toHaveBeenCalled();
+  });
+
+  it('does not accept OTHER through the fixed platform upsert', async () => {
+    const { prisma, service } = makeService();
+
+    await expect(
+      service.upsert('employee-user', 2, 1, 'OTHER', { views: '10' }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    expect(prisma.employeeTrafficRecord.create).not.toHaveBeenCalled();
+  });
+
+  it('renames a draft custom platform and checks other names of the employee', async () => {
+    const { prisma, service } = makeService();
+    prisma.employeeTrafficRecord.findUnique.mockResolvedValue(
+      trafficRecord({ id: 30, platform: 'OTHER', platformName: 'Thread' }),
+    );
+
+    await service.updateCustom('employee-user', 30, {
+      platformName: 'Threads',
+      views: '20',
+    });
+
+    const siblingQuery = callArg<{
+      where: { platform: string; id: unknown };
+    }>(prisma.employeeTrafficRecord.findMany, 0);
+    expect(siblingQuery.where).toMatchObject({
+      platform: 'OTHER',
+      id: { not: 30 },
+    });
+    const update = callArg<{ data: unknown }>(
+      prisma.employeeTrafficRecord.updateMany,
+      0,
+    );
+    expect(update.data).toEqual({ views: 20n, platformName: 'Threads' });
+  });
+
+  it('only renames or deletes custom platforms', async () => {
+    const { prisma, service } = makeService();
+    prisma.employeeTrafficRecord.findUnique.mockResolvedValue(trafficRecord());
+
+    await expect(
+      service.deleteCustom('employee-user', 10),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    expect(prisma.employeeTrafficRecord.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('deletes a draft custom platform and keeps its values in the audit log', async () => {
+    const { prisma, auditLog, service } = makeService();
+    prisma.employeeTrafficRecord.findUnique.mockResolvedValue(
+      trafficRecord({
+        id: 30,
+        platform: 'OTHER',
+        platformName: 'Threads',
+        views: 99n,
+      }),
+    );
+
+    await expect(service.deleteCustom('employee-user', 30)).resolves.toEqual({
+      id: 30,
+      deleted: true,
+    });
+    const audit = callArg<{
+      action: string;
+      beforeData: { platformName: string; views: string };
+    }>(auditLog.record, 1);
+    expect(audit.action).toBe('TRAFFIC_DELETED');
+    expect(audit.beforeData).toMatchObject({
+      platformName: 'Threads',
+      views: '99',
+    });
+  });
+
+  it('does not delete a custom platform that was already self-confirmed', async () => {
+    const { prisma, service } = makeService();
+    prisma.employeeTrafficRecord.findUnique.mockResolvedValue(
+      trafficRecord({
+        id: 30,
+        platform: 'OTHER',
+        platformName: 'Threads',
+        selfConfirmationStatus: 'CONFIRMED',
+      }),
+    );
+
+    await expect(
+      service.deleteCustom('employee-user', 30),
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    expect(prisma.employeeTrafficRecord.deleteMany).not.toHaveBeenCalled();
   });
 });

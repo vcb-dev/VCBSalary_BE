@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseEnumPipe,
@@ -14,6 +15,7 @@ import { RequirePermission } from '../../common/decorators/require-permission.de
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthUserPayload } from '../../common/types/auth-user.types';
 import {
+  CustomTrafficDto,
   LeaderRejectTrafficDto,
   ListTrafficQueryDto,
   PutEmployeeTrafficDto,
@@ -25,6 +27,7 @@ const VIEW_PERMISSIONS = [
   'traffic.view_team',
   'traffic.view_all',
 ];
+const WRITE_PERMISSIONS = ['traffic.write_self', 'traffic.write_team'];
 
 @Controller('payroll-periods')
 export class PayrollPeriodTrafficController {
@@ -50,7 +53,18 @@ export class PayrollPeriodTrafficController {
     return this.trafficService.getForEmployee(user.id, periodId, employeeId);
   }
 
-  @RequirePermission('traffic.write_self', 'traffic.write_team')
+  @RequirePermission(...WRITE_PERMISSIONS)
+  @Post(':periodId/employees/:employeeId/traffic/custom')
+  createCustom(
+    @CurrentUser() user: AuthUserPayload,
+    @Param('periodId', ParseIntPipe) periodId: number,
+    @Param('employeeId', ParseIntPipe) employeeId: number,
+    @Body() dto: CustomTrafficDto,
+  ) {
+    return this.trafficService.createCustom(user.id, periodId, employeeId, dto);
+  }
+
+  @RequirePermission(...WRITE_PERMISSIONS)
   @Put(':periodId/employees/:employeeId/traffic/:platform')
   upsert(
     @CurrentUser() user: AuthUserPayload,
@@ -73,6 +87,25 @@ export class PayrollPeriodTrafficController {
 @Controller('employee-traffic-records')
 export class EmployeeTrafficRecordsController {
   constructor(private readonly trafficService: TrafficService) {}
+
+  @RequirePermission(...WRITE_PERMISSIONS)
+  @Put(':id')
+  updateCustom(
+    @CurrentUser() user: AuthUserPayload,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CustomTrafficDto,
+  ) {
+    return this.trafficService.updateCustom(user.id, id, dto);
+  }
+
+  @RequirePermission(...WRITE_PERMISSIONS)
+  @Delete(':id')
+  deleteCustom(
+    @CurrentUser() user: AuthUserPayload,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.trafficService.deleteCustom(user.id, id);
+  }
 
   @RequirePermission('traffic.write_self')
   @Post(':id/self-confirm')

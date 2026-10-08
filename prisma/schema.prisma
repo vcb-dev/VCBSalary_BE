@@ -150,6 +150,8 @@ enum TrafficPlatform {
   FACEBOOK
   YOUTUBE
   INSTAGRAM
+  // Nền tảng nhập tay ngoài danh sách cố định; tên thật nằm ở employee_traffic_records.platform_name.
+  OTHER
 }
 
 // Enum riêng thay vì dùng lại KpiValueDataSource: traffic là domain khác, và cột
@@ -593,6 +595,9 @@ model EmployeeTrafficRecord {
   employeeId             Int                    @map("employee_id")
   payrollPeriodId        Int                    @map("payroll_period_id")
   platform               TrafficPlatform
+  // Chỉ dùng cho OTHER (vd "Threads", "Zalo"); nền tảng cố định để chuỗi rỗng. NOT NULL vì unique
+  // của Postgres coi các NULL là khác nhau, sẽ để lọt bản ghi trùng của nền tảng cố định.
+  platformName           String                 @default("") @map("platform_name") @db.VarChar(100)
   views                  BigInt                 @default(0)
   selfConfirmationStatus SelfConfirmationStatus @default(DRAFT) @map("self_confirmation_status")
   selfConfirmedByUserId  String?                @map("self_confirmed_by_user_id") @db.Uuid
@@ -617,7 +622,7 @@ model EmployeeTrafficRecord {
   attachments      TrafficRecordAttachment[]
   syncItems        TrafficSyncRunItem[]
 
-  @@unique([employeeId, payrollPeriodId, platform])
+  @@unique([employeeId, payrollPeriodId, platform, platformName])
   @@index([payrollPeriodId])
   @@map("employee_traffic_records")
 }

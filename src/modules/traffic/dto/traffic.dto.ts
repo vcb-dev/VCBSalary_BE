@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayUnique,
@@ -8,6 +8,7 @@ import {
   IsString,
   IsUUID,
   Matches,
+  MaxLength,
   Min,
   MinLength,
 } from 'class-validator';
@@ -40,6 +41,18 @@ export class PutEmployeeTrafficDto {
   @ArrayMaxSize(10)
   @IsUUID('4', { each: true })
   attachmentIds?: string[];
+}
+
+/** Traffic của nền tảng ngoài danh sách cố định: tên nền tảng do người nhập tự đặt. */
+export class CustomTrafficDto extends PutEmployeeTrafficDto {
+  // Gộp khoảng trắng để "Shopee  Video" và "Shopee Video" không thành hai nền tảng.
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : value,
+  )
+  @IsString()
+  @MinLength(1, { message: 'Nhập tên nền tảng' })
+  @MaxLength(100)
+  platformName: string;
 }
 
 export class LeaderRejectTrafficDto {

@@ -14,17 +14,33 @@ import { PeriodScopeService } from '../access-control/period-scope.service';
 import { AuditLogService } from '../audit/audit-log.service';
 import { FilesService } from '../files/files.service';
 import type {
+  CustomTrafficDto,
   LeaderRejectTrafficDto,
   ListTrafficQueryDto,
   PutEmployeeTrafficDto,
 } from './dto/traffic.dto';
 
-const PLATFORMS: TrafficPlatform[] = [
+/** Nền tảng luôn có ô nhập sẵn; nền tảng khác (OTHER) chỉ xuất hiện khi được thêm tay. */
+const FIXED_PLATFORMS: TrafficPlatform[] = [
   'TIKTOK',
   'FACEBOOK',
   'YOUTUBE',
   'INSTAGRAM',
 ];
+const FIXED_PLATFORM_NAMES = new Set(
+  FIXED_PLATFORMS.map((platform) => platform.toLowerCase()),
+);
+const MAX_CUSTOM_PLATFORMS = 20;
+
+type TrafficTarget = {
+  periodId: number;
+  employeeId: number;
+  platform: TrafficPlatform;
+  platformName: string;
+};
+type DraftRecord = EmployeeTrafficRecord & {
+  attachments: { fileAttachmentId: string }[];
+};
 
 const trafficRecordInclude = {
   selfConfirmedBy: { select: { id: true, fullName: true } },
@@ -148,6 +164,7 @@ export class TrafficService {
     const records = await this.prisma.employeeTrafficRecord.findMany({
       where: { employeeId, payrollPeriodId: periodId },
       include: trafficRecordInclude,
+      orderBy: { id: 'asc' },
     });
     const attachmentIds = records.flatMap((record) =>
       record.attachments.map((attachment) => attachment.fileAttachmentId),
@@ -157,18 +174,26 @@ export class TrafficService {
     const attachmentById = new Map(
       attachments.map((attachment) => [attachment.id, attachment]),
     );
-    const byPlatform = new Map(
-      records.map((record) => [record.platform, record]),
+    const fixedByPlatform = new Map(
+      records
+        .filter((record) => record.platform !== 'OTHER')
+        .map((record) => [record.platform, record]),
     );
-    const platformRecords = await Promise.all(
-      PLATFORMS.map((platform) =>
+    // Nền tảng cố định trước (kể cả ô trống), nền tảng thêm tay sau theo thứ tự thêm.
+    const platformRecords = await Promise.all([
+      ...FIXED_PLATFORMS.map((platform) =>
         this.toRecordResponse(
           platform,
-          byPlatform.get(platform) ?? null,
+          fixedByPlatform.get(platform) ?? null,
           attachmentById,
         ),
       ),
-    );
+      ...records
+        .filter((record) => record.platform === 'OTHER')
+        .map((record) =>
+          this.toRecordResponse(record.platform, record, attachmentById),
+        ),
+    ]);
 
     return {
       employeeId,
@@ -184,7 +209,7 @@ export class TrafficService {
     };
   }
 
-  /** Upsert idempotent theo UNIQUE(employee, period, platform), chỉ cho phép khi record còn draft. */
+  /** Upsert idempotent nền tảng cố định theo UNIQUE(employee, period, platform), chỉ khi còn draft. */
   async upsert(
     actorUserId: string,
     periodId: number,
@@ -192,22 +217,139 @@ export class TrafficService {
     platform: TrafficPlatform,
     dto: PutEmployeeTrafficDto,
   ) {
-    const period = await this.assertPeriodExists(periodId);
-    this.assertPeriodEditable(period);
-    await this.getSnapshotOrThrow(periodId, employeeId);
-    await this.assertCanWrite(actorUserId, periodId, employeeId);
+    if (platform === 'OTHER') {
+      throw new AppException(
+        ErrorCode.VALIDATION_ERROR,
+        'Nền tảng khác cần có tên, hãy dùng chức năng thêm nền tảng khác',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    await this.assertWritableEmployee(actorUserId, periodId, employeeId);
 
     const existing = await this.prisma.employeeTrafficRecord.findUnique({
       where: {
-        employeeId_payrollPeriodId_platform: {
+        employeeId_payrollPeriodId_platform_platformName: {
           employeeId,
           payrollPeriodId: periodId,
           platform,
+          platformName: '',
         },
       },
       include: { attachments: { select: { fileAttachmentId: true } } },
     });
     if (existing) this.assertDraftEditable(existing);
+    return this.saveDraft(
+      actorUserId,
+      { periodId, employeeId, platform, platformName: '' },
+      existing,
+      dto,
+    );
+  }
+
+  /** Thêm traffic của một nền tảng ngoài danh sách cố định, tên do người nhập tự đặt. */
+  async createCustom(
+    actorUserId: string,
+    periodId: number,
+    employeeId: number,
+    dto: CustomTrafficDto,
+  ) {
+    await this.assertWritableEmployee(actorUserId, periodId, employeeId);
+    const siblings = await this.findCustomSiblings(periodId, employeeId);
+    this.assertCustomPlatformName(dto.platformName, siblings);
+    if (siblings.length >= MAX_CUSTOM_PLATFORMS) {
+      throw new AppException(
+        ErrorCode.VALIDATION_ERROR,
+        `Mỗi nhân sự chỉ thêm được tối đa ${MAX_CUSTOM_PLATFORMS} nền tảng khác trong một kỳ`,
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    return this.saveDraft(
+      actorUserId,
+      {
+        periodId,
+        employeeId,
+        platform: 'OTHER',
+        platformName: dto.platformName,
+      },
+      null,
+      dto,
+    );
+  }
+
+  /** Sửa tên, lượt xem, minh chứng của nền tảng thêm tay khi bản ghi còn nháp. */
+  async updateCustom(actorUserId: string, id: number, dto: CustomTrafficDto) {
+    const record = await this.getCustomRecordOrThrow(id);
+    await this.assertWritableEmployee(
+      actorUserId,
+      record.payrollPeriodId,
+      record.employeeId,
+    );
+    this.assertDraftEditable(record);
+    const siblings = await this.findCustomSiblings(
+      record.payrollPeriodId,
+      record.employeeId,
+      id,
+    );
+    this.assertCustomPlatformName(dto.platformName, siblings);
+    return this.saveDraft(
+      actorUserId,
+      {
+        periodId: record.payrollPeriodId,
+        employeeId: record.employeeId,
+        platform: 'OTHER',
+        platformName: dto.platformName,
+      },
+      record,
+      dto,
+    );
+  }
+
+  /** Xoá nền tảng thêm nhầm; đã tự xác nhận hoặc đã duyệt thì không xoá được. */
+  async deleteCustom(actorUserId: string, id: number) {
+    const record = await this.getCustomRecordOrThrow(id);
+    await this.assertWritableEmployee(
+      actorUserId,
+      record.payrollPeriodId,
+      record.employeeId,
+    );
+    this.assertDraftEditable(record);
+
+    await this.prisma.$transaction(async (tx) => {
+      const deleted = await tx.employeeTrafficRecord.deleteMany({
+        where: {
+          id,
+          selfConfirmationStatus: 'DRAFT',
+          leaderReviewStatus: { not: 'APPROVED' },
+        },
+      });
+      this.assertClaimed(deleted.count);
+      await this.auditLog.record(tx, {
+        actorUserId,
+        action: 'TRAFFIC_DELETED',
+        entityType: 'EmployeeTrafficRecord',
+        entityId: String(id),
+        targetEmployeeId: record.employeeId,
+        payrollPeriodId: record.payrollPeriodId,
+        beforeData: {
+          platform: record.platform,
+          platformName: record.platformName,
+          views: record.views.toString(),
+          attachmentIds: record.attachments.map(
+            (attachment) => attachment.fileAttachmentId,
+          ),
+        },
+      });
+    });
+    return { id, deleted: true };
+  }
+
+  private async saveDraft(
+    actorUserId: string,
+    target: TrafficTarget,
+    existing: DraftRecord | null,
+    dto: PutEmployeeTrafficDto,
+  ) {
+    const { periodId, employeeId, platform, platformName } = target;
     if (dto.attachmentIds) {
       const retainedIds = new Set(
         existing?.attachments.map(
@@ -230,7 +372,7 @@ export class TrafficService {
             selfConfirmationStatus: 'DRAFT',
             leaderReviewStatus: { not: 'APPROVED' },
           },
-          data: { views },
+          data: { views, platformName },
         });
         this.assertClaimed(claimed.count);
         saved = await tx.employeeTrafficRecord.findUniqueOrThrow({
@@ -238,7 +380,13 @@ export class TrafficService {
         });
       } else {
         saved = await tx.employeeTrafficRecord.create({
-          data: { employeeId, payrollPeriodId: periodId, platform, views },
+          data: {
+            employeeId,
+            payrollPeriodId: periodId,
+            platform,
+            platformName,
+            views,
+          },
         });
       }
 
@@ -265,6 +413,9 @@ export class TrafficService {
         payrollPeriodId: periodId,
         beforeData: existing
           ? {
+              ...(platform === 'OTHER'
+                ? { platformName: existing.platformName }
+                : {}),
               views: existing.views.toString(),
               attachmentIds: existing.attachments.map(
                 (attachment) => attachment.fileAttachmentId,
@@ -273,6 +424,7 @@ export class TrafficService {
           : undefined,
         afterData: {
           platform,
+          ...(platform === 'OTHER' ? { platformName } : {}),
           views: dto.views,
           attachmentIds:
             dto.attachmentIds ??
@@ -547,6 +699,79 @@ export class TrafficService {
     }
   }
 
+  private async assertWritableEmployee(
+    actorUserId: string,
+    periodId: number,
+    employeeId: number,
+  ) {
+    const period = await this.assertPeriodExists(periodId);
+    this.assertPeriodEditable(period);
+    await this.getSnapshotOrThrow(periodId, employeeId);
+    await this.assertCanWrite(actorUserId, periodId, employeeId);
+  }
+
+  private findCustomSiblings(
+    periodId: number,
+    employeeId: number,
+    excludeId?: number,
+  ) {
+    return this.prisma.employeeTrafficRecord.findMany({
+      where: {
+        employeeId,
+        payrollPeriodId: periodId,
+        platform: 'OTHER',
+        id: excludeId ? { not: excludeId } : undefined,
+      },
+      select: { platformName: true },
+    });
+  }
+
+  /** Unique của DB phân biệt hoa/thường; "threads" và "Threads" vẫn phải là một nền tảng. */
+  private assertCustomPlatformName(
+    platformName: string,
+    siblings: { platformName: string }[],
+  ) {
+    const key = platformName.toLowerCase();
+    if (FIXED_PLATFORM_NAMES.has(key)) {
+      throw new AppException(
+        ErrorCode.VALIDATION_ERROR,
+        `${platformName} đã có ô nhập sẵn, hãy nhập ở thẻ nền tảng đó`,
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    if (
+      siblings.some((sibling) => sibling.platformName.toLowerCase() === key)
+    ) {
+      throw new AppException(
+        ErrorCode.CONFLICT,
+        `Nhân sự đã có traffic nền tảng "${platformName}" trong kỳ này`,
+        HttpStatus.CONFLICT,
+      );
+    }
+  }
+
+  private async getCustomRecordOrThrow(id: number) {
+    const record = await this.prisma.employeeTrafficRecord.findUnique({
+      where: { id },
+      include: { attachments: { select: { fileAttachmentId: true } } },
+    });
+    if (!record) {
+      throw new AppException(
+        ErrorCode.NOT_FOUND,
+        'Không tìm thấy bản ghi traffic',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+    if (record.platform !== 'OTHER') {
+      throw new AppException(
+        ErrorCode.VALIDATION_ERROR,
+        'Chỉ đổi tên hoặc xoá được nền tảng thêm tay',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    return record;
+  }
+
   private async getRecordOrThrow(id: number) {
     const record = await this.prisma.employeeTrafficRecord.findUnique({
       where: { id },
@@ -612,6 +837,7 @@ export class TrafficService {
       return {
         id: null,
         platform,
+        platformName: null,
         views: '0',
         selfConfirmationStatus: 'DRAFT' as const,
         selfConfirmedBy: null,
@@ -636,6 +862,7 @@ export class TrafficService {
     return {
       id: record.id,
       platform: record.platform,
+      platformName: record.platform === 'OTHER' ? record.platformName : null,
       views: record.views.toString(),
       selfConfirmationStatus: record.selfConfirmationStatus,
       selfConfirmedBy: record.selfConfirmedBy,

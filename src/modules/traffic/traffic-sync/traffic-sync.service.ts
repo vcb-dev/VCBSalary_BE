@@ -568,10 +568,11 @@ export class TrafficSyncService {
     await this.prisma.$transaction(async (tx) => {
       const saved = await tx.employeeTrafficRecord.upsert({
         where: {
-          employeeId_payrollPeriodId_platform: {
+          employeeId_payrollPeriodId_platform_platformName: {
             employeeId,
             payrollPeriodId: periodId,
             platform: value.platform,
+            platformName: '',
           },
         },
         create: {
@@ -632,7 +633,7 @@ export class TrafficSyncService {
         warnings.push({
           code: 'UNSUPPORTED_PLATFORM',
           email: person.row.email,
-          message: `Nguồn có ${unmapped.views} view ở nền tảng "${unmapped.platform}" nhưng hệ thống lương chưa hỗ trợ nền tảng này`,
+          message: `Nguồn có ${unmapped.views} view ở nền tảng "${unmapped.platform}" nhưng chưa đồng bộ được nền tảng này; nhập tay ở mục nền tảng khác nếu cần tính`,
         });
       }
     }
