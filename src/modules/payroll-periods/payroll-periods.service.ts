@@ -416,7 +416,12 @@ export class PayrollPeriodsService
         team: true,
         leader: true,
         manager: true,
-        employeeGroups: { select: { id: true, code: true } },
+        employeeGroups: {
+          select: {
+            employeeGroupId: true,
+            employeeGroup: { select: { code: true } },
+          },
+        },
         teamMemberships: {
           where: { isActive: true },
           include: { team: true, leader: true, manager: true },
@@ -427,8 +432,8 @@ export class PayrollPeriodsService
     const automaticKpiGroups = await this.prisma.kpiGroup.findMany({
       where: { isActive: true },
       include: {
-        teams: { select: { id: true } },
-        applicableEmployeeGroups: { select: { id: true } },
+        teams: { select: { teamId: true } },
+        applicableEmployeeGroups: { select: { employeeGroupId: true } },
         items: { where: { isActive: true }, select: { id: true } },
       },
     });
@@ -440,11 +445,12 @@ export class PayrollPeriodsService
               group.applicableEmployeeGroups.length > 0 &&
               ((group.teams ?? []).length === 0 ||
                 (group.teams ?? []).some(
-                  (team) => team.id === membership.teamId,
+                  (link) => link.teamId === membership.teamId,
                 )) &&
               group.applicableEmployeeGroups.some((applicableGroup) =>
                 employee.employeeGroups.some(
-                  (employeeGroup) => employeeGroup.id === applicableGroup.id,
+                  (link) =>
+                    link.employeeGroupId === applicableGroup.employeeGroupId,
                 ),
               ),
           )
@@ -490,7 +496,7 @@ export class PayrollPeriodsService
             employeeNameSnapshot: employee.fullName,
             jobTitleSnapshot: employee.jobTitle,
             employeeGroupsSnapshot: employee.employeeGroups.map(
-              (group) => group.code,
+              (link) => link.employeeGroup.code,
             ),
             teamIdSnapshot: employee.teamId,
             teamCodeSnapshot: employee.team.code,
@@ -722,7 +728,12 @@ export class PayrollPeriodsService
         team: true,
         leader: true,
         manager: true,
-        employeeGroups: { select: { id: true, code: true } },
+        employeeGroups: {
+          select: {
+            employeeGroupId: true,
+            employeeGroup: { select: { code: true } },
+          },
+        },
         teamMemberships: {
           where: { isActive: true },
           include: { team: true, leader: true, manager: true },
@@ -745,8 +756,8 @@ export class PayrollPeriodsService
     const automaticKpiGroups = await this.prisma.kpiGroup.findMany({
       where: { isActive: true },
       include: {
-        teams: { select: { id: true } },
-        applicableEmployeeGroups: { select: { id: true } },
+        teams: { select: { teamId: true } },
+        applicableEmployeeGroups: { select: { employeeGroupId: true } },
         items: { where: { isActive: true }, select: { id: true } },
       },
     });
@@ -758,11 +769,12 @@ export class PayrollPeriodsService
               group.applicableEmployeeGroups.length > 0 &&
               ((group.teams ?? []).length === 0 ||
                 (group.teams ?? []).some(
-                  (team) => team.id === membership.teamId,
+                  (link) => link.teamId === membership.teamId,
                 )) &&
               group.applicableEmployeeGroups.some((applicableGroup) =>
                 employee.employeeGroups.some(
-                  (employeeGroup) => employeeGroup.id === applicableGroup.id,
+                  (link) =>
+                    link.employeeGroupId === applicableGroup.employeeGroupId,
                 ),
               ),
           )
@@ -779,7 +791,7 @@ export class PayrollPeriodsService
           employeeNameSnapshot: employee.fullName,
           jobTitleSnapshot: employee.jobTitle,
           employeeGroupsSnapshot: employee.employeeGroups.map(
-            (group) => group.code,
+            (link) => link.employeeGroup.code,
           ),
           teamIdSnapshot: employee.teamId,
           teamCodeSnapshot: employee.team.code,

@@ -577,8 +577,8 @@ describe('UsersService — gắn tài khoản với nhân sự', () => {
         employeeCode: 'NV-01',
         fullName: 'Nhân sự E1',
         employeeGroups: [
-          { defaultRoleId: 'role-editor' },
-          { defaultRoleId: 'role-creator' },
+          { employeeGroup: { defaultRoleId: 'role-editor' } },
+          { employeeGroup: { defaultRoleId: 'role-creator' } },
         ],
       });
       const service = new UsersService(prisma as never);
@@ -624,7 +624,7 @@ describe('UsersService — gắn tài khoản với nhân sự', () => {
         id: 'e1',
         employeeCode: 'NV-01',
         fullName: 'Nhân sự E1',
-        employeeGroups: [{ defaultRoleId: 'role-editor' }],
+        employeeGroups: [{ employeeGroup: { defaultRoleId: 'role-editor' } }],
       });
       prisma.role.findMany.mockResolvedValue([{ id: 'role-hr', code: 'HR' }]);
       const service = new UsersService(prisma as never);
@@ -669,7 +669,7 @@ describe('UsersService — gắn tài khoản với nhân sự', () => {
         id: 'e1',
         employeeCode: 'NV-01',
         fullName: 'Nhân sự E1',
-        employeeGroups: [{ defaultRoleId: 'role-editor' }],
+        employeeGroups: [{ employeeGroup: { defaultRoleId: 'role-editor' } }],
       });
       const service = new UsersService(prisma as never);
 
@@ -805,7 +805,11 @@ describe('UsersService — gắn tài khoản với nhân sự', () => {
 
       expect(prisma.employee.findUnique).toHaveBeenCalledWith({
         where: { id: 'e1' },
-        include: { employeeGroups: { select: { defaultRoleId: true } } },
+        include: {
+          employeeGroups: {
+            select: { employeeGroup: { select: { defaultRoleId: true } } },
+          },
+        },
       });
       expect(employeeIdArgOf(prisma.user.update)).toBe('e1');
     });

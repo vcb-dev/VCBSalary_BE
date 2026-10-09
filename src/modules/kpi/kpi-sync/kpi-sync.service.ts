@@ -860,12 +860,18 @@ export class KpiSyncService {
           description: 'Đồng bộ từ VCBI',
           dataSource: 'AUTOMATION_GEN_VIDEO',
           createdByUserId: actorUserId,
-          teams: { connect: { id: localTeamId } },
+          teams: { create: { teamId: localTeamId } },
         },
         update: {
           name: sourceGoal.kpi_group_name,
           isActive: true,
-          teams: { connect: { id: localTeamId } },
+          // Nhóm đã gắn team này từ lượt sync trước thì bỏ qua, giống `connect` của quan hệ ngầm.
+          teams: {
+            createMany: {
+              data: [{ teamId: localTeamId }],
+              skipDuplicates: true,
+            },
+          },
         },
       });
       const item = await this.prisma.kpiItem.upsert({

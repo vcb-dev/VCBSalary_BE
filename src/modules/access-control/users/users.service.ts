@@ -447,7 +447,11 @@ export class UsersService {
   ) {
     const employee = await this.prisma.employee.findUnique({
       where: { id: employeeId },
-      include: { employeeGroups: { select: { defaultRoleId: true } } },
+      include: {
+        employeeGroups: {
+          select: { employeeGroup: { select: { defaultRoleId: true } } },
+        },
+      },
     });
     if (!employee) {
       throw new AppException(
@@ -576,11 +580,13 @@ export class UsersService {
   }
 
   private deriveDefaultRoleAssignments(
-    employee: { employeeGroups: { defaultRoleId: number | null }[] } | null,
+    employee: {
+      employeeGroups: { employeeGroup: { defaultRoleId: number | null } }[];
+    } | null,
   ): ResolvedRoleAssignment[] {
     const roleIds = new Set(
       employee?.employeeGroups
-        .map((group) => group.defaultRoleId)
+        .map((link) => link.employeeGroup.defaultRoleId)
         .filter((roleId): roleId is number => roleId !== null) ?? [],
     );
 

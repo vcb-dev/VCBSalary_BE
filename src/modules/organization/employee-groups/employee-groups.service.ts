@@ -170,14 +170,14 @@ export class EmployeeGroupsService {
     const [employeeCount, kpiGroupCount] = await Promise.all([
       this.prisma.employee.count({
         where: {
-          employeeGroups: { some: { id } },
+          employeeGroups: { some: { employeeGroupId: id } },
           team: { departmentId: { not: departmentId } },
         },
       }),
       this.prisma.kpiGroup.count({
         where: {
-          applicableEmployeeGroups: { some: { id } },
-          teams: { some: { department: { id: { not: departmentId } } } },
+          applicableEmployeeGroups: { some: { employeeGroupId: id } },
+          teams: { some: { team: { departmentId: { not: departmentId } } } },
         },
       }),
     ]);

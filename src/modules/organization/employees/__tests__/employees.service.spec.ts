@@ -161,6 +161,7 @@ describe('EmployeesService', () => {
       prisma.employee.create.mockResolvedValue({
         id: 1,
         employeeCode: 'NV-000001',
+        employeeGroups: [],
       });
       const service = new EmployeesService(
         prisma as never,
@@ -186,7 +187,7 @@ describe('EmployeesService', () => {
         { id: 11, jobTitleKeywords: ['KE TOAN'] },
         { id: 12, jobTitleKeywords: [] },
       ]);
-      prisma.employee.create.mockResolvedValue({ id: 1 });
+      prisma.employee.create.mockResolvedValue({ id: 1, employeeGroups: [] });
       const service = new EmployeesService(
         prisma as never,
         makeAuthorizationMock() as never,
@@ -199,9 +200,15 @@ describe('EmployeesService', () => {
       });
 
       const createArg = firstCallArg<{
-        data: { employeeGroups: { connect: { id: number }[] } };
+        data: {
+          employeeGroups: {
+            createMany: { data: { employeeGroupId: number }[] };
+          };
+        };
       }>(prisma.employee.create);
-      expect(createArg.data.employeeGroups.connect).toEqual([{ id: 10 }]);
+      expect(createArg.data.employeeGroups.createMany.data).toEqual([
+        { employeeGroupId: 10 },
+      ]);
       const groupQuery = firstCallArg<{
         where: { OR: Array<{ departmentId: number | null }> };
       }>(prisma.employeeGroup.findMany);
@@ -240,7 +247,7 @@ describe('EmployeesService', () => {
         { id: 2, name: 'Content Creator', status: 'ACTIVE', departmentId: 7 },
         { id: 1, name: 'Editor', status: 'ACTIVE', departmentId: 7 },
       ]);
-      prisma.employee.create.mockResolvedValue({ id: 1 });
+      prisma.employee.create.mockResolvedValue({ id: 1, employeeGroups: [] });
       const service = new EmployeesService(
         prisma as never,
         makeAuthorizationMock() as never,
@@ -255,19 +262,24 @@ describe('EmployeesService', () => {
       const createArg = firstCallArg<{
         data: {
           jobTitle: string;
-          employeeGroups: { connect: { id: number }[] };
+          employeeGroups: {
+            createMany: { data: { employeeGroupId: number }[] };
+          };
         };
       }>(prisma.employee.create);
       expect(createArg.data.jobTitle).toBe('Editor, Content Creator');
-      expect(createArg.data.employeeGroups.connect).toEqual(
-        expect.arrayContaining([{ id: 1 }, { id: 2 }]),
+      expect(createArg.data.employeeGroups.createMany.data).toEqual(
+        expect.arrayContaining([
+          { employeeGroupId: 1 },
+          { employeeGroupId: 2 },
+        ]),
       );
     });
 
     it('không chọn nhóm và không gửi chức danh thì không đoán nhóm', async () => {
       const prisma = makePrismaMock();
       prisma.team.findUnique.mockResolvedValue({ id: 1, departmentId: 7 });
-      prisma.employee.create.mockResolvedValue({ id: 1 });
+      prisma.employee.create.mockResolvedValue({ id: 1, employeeGroups: [] });
       const service = new EmployeesService(
         prisma as never,
         makeAuthorizationMock() as never,
@@ -276,10 +288,13 @@ describe('EmployeesService', () => {
       await service.create({ fullName: 'A', teamId: 1 });
 
       const createArg = firstCallArg<{
-        data: { jobTitle: string; employeeGroups: { connect: unknown[] } };
+        data: {
+          jobTitle: string;
+          employeeGroups: { createMany: { data: unknown[] } };
+        };
       }>(prisma.employee.create);
       expect(createArg.data.jobTitle).toBe('Chưa phân nhóm');
-      expect(createArg.data.employeeGroups.connect).toEqual([]);
+      expect(createArg.data.employeeGroups.createMany.data).toEqual([]);
       expect(prisma.employeeGroup.findMany).not.toHaveBeenCalled();
     });
 
@@ -290,12 +305,12 @@ describe('EmployeesService', () => {
         employmentStatus: 'ACTIVE',
         sourceSystem: null,
         team: { id: 1, departmentId: 7 },
-        employeeGroups: [{ id: 1 }],
+        employeeGroups: [{ employeeGroup: { id: 1 } }],
       });
       prisma.employeeGroup.findMany.mockResolvedValue([
         { id: 2, name: 'Content Creator', status: 'ACTIVE', departmentId: 7 },
       ]);
-      prisma.employee.update.mockResolvedValue({ id: 1 });
+      prisma.employee.update.mockResolvedValue({ id: 1, employeeGroups: [] });
       const service = new EmployeesService(
         prisma as never,
         makeAuthorizationMock() as never,
@@ -303,10 +318,15 @@ describe('EmployeesService', () => {
 
       await service.update(1, { employeeGroupIds: [2] });
 
-      const update = firstCallArg<{ data: { jobTitle?: string } }>(
-        prisma.employee.update,
-      );
+      const update = firstCallArg<{
+        data: { jobTitle?: string; employeeGroups?: unknown };
+      }>(prisma.employee.update);
       expect(update.data.jobTitle).toBe('Content Creator');
+      // Thay đúng tập nhóm trên bảng nối: gỡ nhóm 1, thêm nhóm 2.
+      expect(update.data.employeeGroups).toEqual({
+        deleteMany: { employeeGroupId: { notIn: [2] } },
+        createMany: { data: [{ employeeGroupId: 2 }], skipDuplicates: true },
+      });
     });
 
     it('đổi nhóm của nhân sự đồng bộ thì giữ chức danh VCBI cấp', async () => {
@@ -316,12 +336,12 @@ describe('EmployeesService', () => {
         employmentStatus: 'ACTIVE',
         sourceSystem: 'AUTOMATION_GEN_VIDEO',
         team: { id: 1, departmentId: 7 },
-        employeeGroups: [{ id: 1 }],
+        employeeGroups: [{ employeeGroup: { id: 1 } }],
       });
       prisma.employeeGroup.findMany.mockResolvedValue([
         { id: 1, name: 'Editor', status: 'ACTIVE', departmentId: 7 },
       ]);
-      prisma.employee.update.mockResolvedValue({ id: 1 });
+      prisma.employee.update.mockResolvedValue({ id: 1, employeeGroups: [] });
       const service = new EmployeesService(
         prisma as never,
         makeAuthorizationMock() as never,
@@ -342,6 +362,7 @@ describe('EmployeesService', () => {
       prisma.employee.findUnique.mockResolvedValue({
         id: 'emp-1',
         employmentStatus: 'ACTIVE',
+        employeeGroups: [],
       });
       const service = new EmployeesService(
         prisma as never,
@@ -358,6 +379,7 @@ describe('EmployeesService', () => {
       prisma.employee.findUnique.mockResolvedValue({
         id: 'emp-1',
         employmentStatus: 'ACTIVE',
+        employeeGroups: [],
       });
       const service = new EmployeesService(
         prisma as never,
@@ -374,8 +396,12 @@ describe('EmployeesService', () => {
       prisma.employee.findUnique.mockResolvedValue({
         id: 'emp-1',
         employmentStatus: 'ACTIVE',
+        employeeGroups: [],
       });
-      prisma.employee.update.mockResolvedValue({ id: 'emp-1' });
+      prisma.employee.update.mockResolvedValue({
+        id: 'emp-1',
+        employeeGroups: [],
+      });
       const service = new EmployeesService(
         prisma as never,
         makeAuthorizationMock() as never,
@@ -396,8 +422,9 @@ describe('EmployeesService', () => {
         id: 1,
         employmentStatus: 'LEFT',
         leftAt: new Date('2026-01-01'),
+        employeeGroups: [],
       });
-      prisma.employee.update.mockResolvedValue({ id: 1 });
+      prisma.employee.update.mockResolvedValue({ id: 1, employeeGroups: [] });
       const service = new EmployeesService(
         prisma as never,
         makeAuthorizationMock() as never,
@@ -416,8 +443,9 @@ describe('EmployeesService', () => {
       prisma.employee.findUnique.mockResolvedValue({
         id: 1,
         employmentStatus: 'ACTIVE',
+        employeeGroups: [],
       });
-      prisma.employee.update.mockResolvedValue({ id: 1 });
+      prisma.employee.update.mockResolvedValue({ id: 1, employeeGroups: [] });
       const service = new EmployeesService(
         prisma as never,
         makeAuthorizationMock() as never,
@@ -448,7 +476,11 @@ describe('EmployeesService', () => {
   describe('deactivateMembership — giữ tổng tỷ trọng KPI đúng 100%', () => {
     it('dồn tỷ trọng của team bị gỡ về team chính đang có', async () => {
       const prisma = makePrismaMock();
-      prisma.employee.findUnique.mockResolvedValue({ id: 1, teamId: 1 });
+      prisma.employee.findUnique.mockResolvedValue({
+        id: 1,
+        teamId: 1,
+        employeeGroups: [],
+      });
       prisma.employeeTeamMembership.findUnique.mockResolvedValue({
         id: 2,
         employeeId: 1,
@@ -486,7 +518,11 @@ describe('EmployeesService', () => {
 
     it('gỡ team chính: team nặng nhất còn lại lên thay và nhận phần tỷ trọng còn thiếu', async () => {
       const prisma = makePrismaMock();
-      prisma.employee.findUnique.mockResolvedValue({ id: 1, teamId: 1 });
+      prisma.employee.findUnique.mockResolvedValue({
+        id: 1,
+        teamId: 1,
+        employeeGroups: [],
+      });
       prisma.employeeTeamMembership.findUnique.mockResolvedValue({
         id: 1,
         employeeId: 1,
@@ -541,7 +577,11 @@ describe('EmployeesService', () => {
 
     it('vẫn chặn khi gỡ team hoạt động cuối cùng', async () => {
       const prisma = makePrismaMock();
-      prisma.employee.findUnique.mockResolvedValue({ id: 1, teamId: 1 });
+      prisma.employee.findUnique.mockResolvedValue({
+        id: 1,
+        teamId: 1,
+        employeeGroups: [],
+      });
       prisma.employeeTeamMembership.findUnique.mockResolvedValue({
         id: 1,
         employeeId: 1,
@@ -569,6 +609,7 @@ describe('EmployeesService', () => {
       prisma.employee.findUnique.mockResolvedValue({
         id: 'emp-1',
         teamId: 'team-1',
+        employeeGroups: [{ employeeGroup: { id: 10, name: 'Editor' } }],
       });
       const authorization = makeAuthorizationMock();
       authorization.resolveScope.mockResolvedValue({ type: 'ALL' });
@@ -577,8 +618,10 @@ describe('EmployeesService', () => {
         authorization as never,
       );
 
+      // API vẫn trả nhóm nghiệp vụ dạng mảng phẳng như trước khi tách bảng nối.
       await expect(service.getOne('user-1', 'emp-1')).resolves.toMatchObject({
         id: 'emp-1',
+        employeeGroups: [{ id: 10, name: 'Editor' }],
       });
     });
 
@@ -587,6 +630,7 @@ describe('EmployeesService', () => {
       prisma.employee.findUnique.mockResolvedValue({
         id: 'emp-1',
         teamId: 'team-other',
+        employeeGroups: [],
       });
       const authorization = makeAuthorizationMock();
       authorization.resolveScope.mockResolvedValue({
@@ -608,6 +652,7 @@ describe('EmployeesService', () => {
       prisma.employee.findUnique.mockResolvedValue({
         id: 'emp-1',
         teamId: 'team-1',
+        employeeGroups: [],
       });
       const authorization = makeAuthorizationMock();
       authorization.resolveScope.mockResolvedValue({ type: 'SELF' });

@@ -148,9 +148,12 @@ describe('KpiGroupsService', () => {
       );
 
       const create = firstCallArg<{
-        data: { teams: { connect: Array<{ id: number }> } };
+        data: { teams: { createMany: { data: Array<{ teamId: number }> } } };
       }>(prisma.kpiGroup.create);
-      expect(create.data.teams.connect).toEqual([{ id: 1 }, { id: 2 }]);
+      expect(create.data.teams.createMany.data).toEqual([
+        { teamId: 1 },
+        { teamId: 2 },
+      ]);
     });
 
     it('does not let a leader configure a group for a team outside their scope', async () => {
@@ -214,7 +217,11 @@ describe('KpiGroupsService', () => {
       prisma.employeeGroup.findMany.mockResolvedValue([
         { id: 10, name: 'Editor', status: 'ACTIVE', departmentId: 1 },
       ]);
-      prisma.kpiGroup.create.mockResolvedValue({ id: 'g1', code: 'CONTENT' });
+      prisma.kpiGroup.create.mockResolvedValue({
+        id: 'g1',
+        code: 'CONTENT',
+        applicableEmployeeGroups: [],
+      });
       const service = new KpiGroupsService(
         prisma as never,
         makeAuditLogMock() as never,
@@ -232,11 +239,13 @@ describe('KpiGroupsService', () => {
 
       const create = firstCallArg<{
         data: {
-          applicableEmployeeGroups: { connect: Array<{ id: number }> };
+          applicableEmployeeGroups: {
+            createMany: { data: Array<{ employeeGroupId: number }> };
+          };
         };
       }>(prisma.kpiGroup.create);
-      expect(create.data.applicableEmployeeGroups.connect).toEqual([
-        { id: 10 },
+      expect(create.data.applicableEmployeeGroups.createMany.data).toEqual([
+        { employeeGroupId: 10 },
       ]);
     });
   });
@@ -252,7 +261,11 @@ describe('KpiGroupsService', () => {
         teams: [],
         applicableEmployeeGroups: [],
       });
-      prisma.kpiGroup.update.mockResolvedValue({ id: 1, name: 'Tên mới' });
+      prisma.kpiGroup.update.mockResolvedValue({
+        id: 1,
+        name: 'Tên mới',
+        applicableEmployeeGroups: [],
+      });
       const service = new KpiGroupsService(
         prisma as never,
         makeAuditLogMock() as never,
@@ -284,6 +297,7 @@ describe('KpiGroupsService', () => {
         id: 1,
         code: 'KPI-G-00001',
         name: 'Tên mới',
+        applicableEmployeeGroups: [],
       });
       const service = new KpiGroupsService(
         prisma as never,
@@ -296,6 +310,67 @@ describe('KpiGroupsService', () => {
         prisma.kpiGroup.update,
       );
       expect(update.data).not.toHaveProperty('code');
+    });
+
+    it('thay danh sách team bằng đúng tập id mới trên bảng nối', async () => {
+      const prisma = makePrismaMock();
+      prisma.kpiGroup.findUnique.mockResolvedValue({
+        id: 1,
+        code: 'KPI-G-00001',
+        name: 'Nhóm cũ',
+        teams: [{ teamId: 1, team: { departmentId: 1 } }],
+        applicableEmployeeGroups: [],
+      });
+      prisma.team.findMany.mockResolvedValue([
+        { id: 1, departmentId: 1 },
+        { id: 2, departmentId: 1 },
+      ]);
+      prisma.kpiGroup.update.mockResolvedValue({
+        id: 1,
+        applicableEmployeeGroups: [],
+      });
+      const service = new KpiGroupsService(
+        prisma as never,
+        makeAuditLogMock() as never,
+        makeAuthorizationMock() as never,
+      );
+
+      await service.update(1, { teamIds: [1, 2] }, 'user-admin');
+
+      const update = firstCallArg<{ data: { teams: unknown } }>(
+        prisma.kpiGroup.update,
+      );
+      expect(update.data.teams).toEqual({
+        deleteMany: { teamId: { notIn: [1, 2] } },
+        createMany: {
+          data: [{ teamId: 1 }, { teamId: 2 }],
+          skipDuplicates: true,
+        },
+      });
+    });
+  });
+
+  describe('getOrThrow', () => {
+    it('trả team và nhóm nghiệp vụ dạng mảng phẳng như trước khi tách bảng nối', async () => {
+      const prisma = makePrismaMock();
+      prisma.kpiGroup.findUnique.mockResolvedValue({
+        id: 1,
+        teams: [{ team: { id: 2, code: 'K2', name: 'Team K2' } }],
+        applicableEmployeeGroups: [
+          { employeeGroup: { id: 10, code: 'EDITOR', name: 'Editor' } },
+        ],
+        items: [],
+      });
+      const service = new KpiGroupsService(
+        prisma as never,
+        makeAuditLogMock() as never,
+        makeAuthorizationMock() as never,
+      );
+
+      await expect(service.getOrThrow(1)).resolves.toMatchObject({
+        teams: [{ id: 2, code: 'K2', name: 'Team K2' }],
+        applicableEmployeeGroups: [{ id: 10, code: 'EDITOR', name: 'Editor' }],
+      });
     });
 
     it('rejects updating a group that does not exist', async () => {

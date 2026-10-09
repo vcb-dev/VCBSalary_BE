@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { AppException } from '../../common/errors/app.exception';
 import { ErrorCode } from '../../common/errors/error-codes';
 import { paginate, toSkipTake } from '../../common/utils/pagination.dto';
+import { withFlatEmployeeGroups } from '../../common/utils/employee-group.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthorizationService } from '../access-control/authorization.service';
 import type { ResolvedScope } from '../../common/types/resolved-scope.types';
@@ -54,7 +55,9 @@ const auditInclude = {
       },
       leader: { select: { id: true, fullName: true } },
       manager: { select: { id: true, fullName: true } },
-      employeeGroups: { select: { id: true, name: true } },
+      employeeGroups: {
+        select: { employeeGroup: { select: { id: true, name: true } } },
+      },
     },
   },
   payrollPeriod: {
@@ -71,6 +74,20 @@ const auditInclude = {
 } satisfies Prisma.AuditLogInclude;
 
 type AuditFilters = Omit<ListAuditLogsQueryDto, 'page' | 'pageSize'>;
+
+function withFlatTargetEmployeeGroups<
+  T extends {
+    targetEmployee: {
+      employeeGroups: Array<{ employeeGroup: object }>;
+    } | null;
+  },
+>(row: T) {
+  const { targetEmployee, ...rest } = row;
+  return {
+    ...rest,
+    targetEmployee: targetEmployee && withFlatEmployeeGroups(targetEmployee),
+  };
+}
 
 @Injectable()
 export class AuditQueryService {
@@ -92,7 +109,12 @@ export class AuditQueryService {
       }),
       this.prisma.auditLog.count({ where }),
     ]);
-    return paginate(rows, total, query.page, query.pageSize);
+    return paginate(
+      rows.map(withFlatTargetEmployeeGroups),
+      total,
+      query.page,
+      query.pageSize,
+    );
   }
 
   async getOne(userId: string, id: number) {
@@ -113,7 +135,7 @@ export class AuditQueryService {
       );
     }
     const references = await this.loadReferences(row.beforeData, row.afterData);
-    return { ...row, references };
+    return { ...withFlatTargetEmployeeGroups(row), references };
   }
 
   async exportCsv(userId: string, query: ExportAuditLogsQueryDto) {

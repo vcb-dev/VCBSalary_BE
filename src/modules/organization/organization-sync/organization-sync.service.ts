@@ -11,6 +11,10 @@ import { AppException } from '../../../common/errors/app.exception';
 import { ErrorCode } from '../../../common/errors/error-codes';
 import { forEachConcurrent } from '../../../common/utils/for-each-concurrent';
 import {
+  createJoinRows,
+  replaceJoinRows,
+} from '../../../common/utils/join-table.util';
+import {
   paginate,
   toSkipTake,
   type PaginationQueryDto,
@@ -423,9 +427,7 @@ export class OrganizationSyncService {
         where: { id: fallbackEmployeeId },
         data: {
           ...data,
-          employeeGroups: {
-            set: employeeGroupIds.map((groupId) => ({ id: groupId })),
-          },
+          employeeGroups: replaceJoinRows('employeeGroupId', employeeGroupIds),
         },
       });
     }
@@ -451,9 +453,7 @@ export class OrganizationSyncService {
           leftAt,
           // Giữ cột legacy trong giai đoạn chuyển đổi; mapping chuẩn nằm ở ExternalEmployeeIdentity.
           externalId: member.user_id,
-          employeeGroups: {
-            connect: employeeGroupIds.map((groupId) => ({ id: groupId })),
-          },
+          employeeGroups: createJoinRows('employeeGroupId', employeeGroupIds),
         },
       });
     } catch (error) {
@@ -484,9 +484,10 @@ export class OrganizationSyncService {
             where: { id: concurrentlyCreated.id },
             data: {
               ...data,
-              employeeGroups: {
-                set: employeeGroupIds.map((groupId) => ({ id: groupId })),
-              },
+              employeeGroups: replaceJoinRows(
+                'employeeGroupId',
+                employeeGroupIds,
+              ),
             },
           });
         }

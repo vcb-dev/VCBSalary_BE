@@ -14,21 +14,30 @@ import type { ListEmployeesQueryDto } from './dto/list-employees-query.dto';
 import {
   assertEmployeeGroupsAssignable,
   normalizeJobTitle,
+  withFlatEmployeeGroups,
 } from '../../../common/utils/employee-group.util';
+import {
+  createJoinRows,
+  replaceJoinRows,
+} from '../../../common/utils/join-table.util';
 import { buildEmployeeScopeWhere } from '../../../common/utils/employee-scope.util';
 import { AuditLogService } from '../../audit/audit-log.service';
 
 // Nhóm nghiệp vụ trả kèm nhân sự: FE hiển thị badge + form sửa cần đúng bộ id/tên này.
 const EMPLOYEE_GROUP_SELECT = {
   select: {
-    id: true,
-    code: true,
-    name: true,
-    departmentId: true,
-    // FE trang Phân quyền gợi ý sẵn vai trò mặc định theo nhóm, giống hệt logic BE khi tạo tài khoản.
-    defaultRoleId: true,
+    employeeGroup: {
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        departmentId: true,
+        // FE trang Phân quyền gợi ý sẵn vai trò mặc định theo nhóm, giống hệt logic BE khi tạo tài khoản.
+        defaultRoleId: true,
+      },
+    },
   },
-  orderBy: { name: 'asc' },
+  orderBy: { employeeGroup: { name: 'asc' } },
 } as const;
 
 const TEAM_MEMBERSHIP_INCLUDE = {
@@ -92,7 +101,12 @@ export class EmployeesService {
       this.prisma.employee.count({ where }),
     ]);
 
-    return paginate(data, total, query.page, query.pageSize);
+    return paginate(
+      data.map(withFlatEmployeeGroups),
+      total,
+      query.page,
+      query.pageSize,
+    );
   }
 
   async getOne(userId: string, id: number) {
@@ -138,7 +152,7 @@ export class EmployeesService {
       );
     }
 
-    return employee;
+    return withFlatEmployeeGroups(employee);
   }
 
   async create(dto: CreateEmployeeDto, actorUserId?: string) {
@@ -166,7 +180,7 @@ export class EmployeesService {
       employeeCode,
       fullName: dto.fullName,
       jobTitle: dto.jobTitle ?? jobTitleFromGroups(groups ?? []),
-      employeeGroups: { connect: employeeGroupIds.map((id) => ({ id })) },
+      employeeGroups: createJoinRows('employeeGroupId', employeeGroupIds),
       team: { connect: { id: dto.teamId } },
       teamMemberships: {
         create: {
@@ -187,11 +201,13 @@ export class EmployeesService {
       employmentStatus: dto.employmentStatus,
       joinedAt: dto.joinedAt ? new Date(dto.joinedAt) : undefined,
     };
-    const create = (db: PrismaService | Prisma.TransactionClient) =>
-      db.employee.create({
-        data,
-        include: { employeeGroups: EMPLOYEE_GROUP_SELECT },
-      });
+    const create = async (db: PrismaService | Prisma.TransactionClient) =>
+      withFlatEmployeeGroups(
+        await db.employee.create({
+          data,
+          include: { employeeGroups: EMPLOYEE_GROUP_SELECT },
+        }),
+      );
     if (!actorUserId || !this.auditLog) return create(this.prisma);
     return this.prisma.$transaction(async (tx) => {
       const created = await create(tx);
@@ -262,7 +278,7 @@ export class EmployeesService {
           fullName: dto.fullName,
           jobTitle,
           employeeGroups: employeeGroupIds
-            ? { set: employeeGroupIds.map((groupId) => ({ id: groupId })) }
+            ? replaceJoinRows('employeeGroupId', employeeGroupIds)
             : undefined,
           teamId: dto.teamId,
           leaderEmployeeId: dto.leaderEmployeeId,
@@ -310,7 +326,7 @@ export class EmployeesService {
         // trừ lại phần đó để tổng không vọt lên trên 100%.
         await this.rebalanceToPrimary(db, id, primaryMembership.id);
       }
-      return updated;
+      return withFlatEmployeeGroups(updated);
     };
     if (!actorUserId || !this.auditLog) return update(this.prisma);
     return this.prisma.$transaction(async (tx) => {
@@ -552,7 +568,10 @@ export class EmployeesService {
   private async getOrThrow(id: number) {
     const employee = await this.prisma.employee.findUnique({
       where: { id },
-      include: { team: true, employeeGroups: { select: { id: true } } },
+      include: {
+        team: true,
+        employeeGroups: { select: { employeeGroup: { select: { id: true } } } },
+      },
     });
     if (!employee) {
       throw new AppException(
@@ -561,7 +580,7 @@ export class EmployeesService {
         HttpStatus.NOT_FOUND,
       );
     }
-    return employee;
+    return withFlatEmployeeGroups(employee);
   }
 
   private async isVisible(

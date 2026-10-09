@@ -266,10 +266,10 @@ model EmployeeGroup {
   createdAt DateTime            @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt DateTime            @updatedAt @map("updated_at") @db.Timestamptz()
 
-  department  Department? @relation(fields: [departmentId], references: [id], onDelete: Restrict)
-  defaultRole Role?       @relation(fields: [defaultRoleId], references: [id], onDelete: SetNull)
-  employees   Employee[]  @relation("EmployeeEmployeeGroups")
-  kpiGroups   KpiGroup[]  @relation("KpiGroupEmployeeGroups")
+  department  Department?             @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  defaultRole Role?                   @relation(fields: [defaultRoleId], references: [id], onDelete: SetNull)
+  employees   EmployeeGroupMember[]
+  kpiGroups   KpiGroupEmployeeGroup[]
 
   @@index([departmentId])
   @@map("employee_groups")
@@ -298,7 +298,7 @@ model Team {
   kpiSyncItems              KpiSyncRunItem[]
   salaryKpiItems            SalaryRecordKpiItem[]
   scopedUserRoles           UserRole[]
-  kpiGroups                 KpiGroup[]                          @relation("KpiGroupTeams")
+  kpiGroups                 KpiGroupTeam[]
 
   @@index([departmentId])
   @@map("teams")
@@ -321,10 +321,10 @@ model Employee {
   createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt         DateTime         @updatedAt @map("updated_at") @db.Timestamptz()
 
-  team           Team            @relation(fields: [teamId], references: [id])
-  employeeGroups EmployeeGroup[] @relation("EmployeeEmployeeGroups")
-  leader         Employee?       @relation("EmployeeLeader", fields: [leaderEmployeeId], references: [id])
-  manager        Employee?       @relation("EmployeeManager", fields: [managerEmployeeId], references: [id])
+  team           Team                  @relation(fields: [teamId], references: [id])
+  employeeGroups EmployeeGroupMember[]
+  leader         Employee?             @relation("EmployeeLeader", fields: [leaderEmployeeId], references: [id])
+  manager        Employee?             @relation("EmployeeManager", fields: [managerEmployeeId], references: [id])
 
   ledEmployees     Employee[] @relation("EmployeeLeader")
   managedEmployees Employee[] @relation("EmployeeManager")
@@ -357,6 +357,20 @@ model Employee {
   @@index([leaderEmployeeId])
   @@index([managerEmployeeId])
   @@map("employees")
+}
+
+// Bảng nối nhân sự ↔ nhóm nghiệp vụ. Khai báo tường minh (thay vì quan hệ nhiều-nhiều ngầm của
+// Prisma, vốn đặt tên bảng `_X` và cột A/B) để tên bảng/cột trên DB tự giải thích.
+model EmployeeGroupMember {
+  employeeId      Int @map("employee_id")
+  employeeGroupId Int @map("employee_group_id")
+
+  employee      Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employeeGroup EmployeeGroup @relation(fields: [employeeGroupId], references: [id], onDelete: Cascade)
+
+  @@id([employeeId, employeeGroupId])
+  @@index([employeeGroupId])
+  @@map("employee_group_members")
 }
 
 // Khóa nhận diện nhân sự khi sync là (sourceSystem, externalUserId) — mã/email do nguồn gửi lên
@@ -866,11 +880,11 @@ model KpiGroup {
   createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt       DateTime      @updatedAt @map("updated_at") @db.Timestamptz()
 
-  createdBy                User            @relation(fields: [createdByUserId], references: [id])
+  createdBy                User                    @relation(fields: [createdByUserId], references: [id])
   // Rỗng chỉ còn ở dữ liệu cũ và được hiểu là dùng chung toàn hệ thống; nhóm mới bắt buộc chọn team.
-  teams                    Team[]          @relation("KpiGroupTeams")
+  teams                    KpiGroupTeam[]
   // Rỗng = chỉ gán thủ công. Có giá trị = tự gán khi mở kỳ cho nhân sự khớp ít nhất một nhóm.
-  applicableEmployeeGroups EmployeeGroup[] @relation("KpiGroupEmployeeGroups")
+  applicableEmployeeGroups KpiGroupEmployeeGroup[]
 
   items       KpiItem[]
   assignments EmployeeKpiAssignment[]
@@ -879,6 +893,33 @@ model KpiGroup {
   proposals   KpiOkrProposal[]
 
   @@map("kpi_groups")
+}
+
+// Team được dùng nhóm KPI. Bảng nối tường minh, cùng lý do với EmployeeGroupMember.
+model KpiGroupTeam {
+  kpiGroupId Int @map("kpi_group_id")
+  teamId     Int @map("team_id")
+
+  kpiGroup KpiGroup @relation(fields: [kpiGroupId], references: [id], onDelete: Cascade)
+  team     Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@id([kpiGroupId, teamId])
+  @@index([teamId])
+  @@map("kpi_group_teams")
+}
+
+// Nhóm nghiệp vụ được tự gán nhóm KPI khi mở kỳ. Thứ tự cột của khóa chính giữ nguyên như bảng
+// ngầm cũ (`_KpiGroupEmployeeGroups`, A = nhóm nghiệp vụ) để migration chỉ cần đổi tên.
+model KpiGroupEmployeeGroup {
+  employeeGroupId Int @map("employee_group_id")
+  kpiGroupId      Int @map("kpi_group_id")
+
+  employeeGroup EmployeeGroup @relation(fields: [employeeGroupId], references: [id], onDelete: Cascade)
+  kpiGroup      KpiGroup      @relation(fields: [kpiGroupId], references: [id], onDelete: Cascade)
+
+  @@id([employeeGroupId, kpiGroupId])
+  @@index([kpiGroupId])
+  @@map("kpi_group_employee_groups")
 }
 
 // Định nghĩa cố định của một đầu mục; target không nằm ở đây mà ở KpiPeriodTarget vì target

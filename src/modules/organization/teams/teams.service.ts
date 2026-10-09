@@ -99,7 +99,9 @@ export class TeamsService {
     const [employeeCount, scopedRoleCount, kpiGroupCount] = await Promise.all([
       membershipCount,
       this.prisma.userRole.count({ where: { scopeTeamId: id } }),
-      this.prisma.kpiGroup.count({ where: { teams: { some: { id } } } }),
+      this.prisma.kpiGroup.count({
+        where: { teams: { some: { teamId: id } } },
+      }),
     ]);
 
     const blockers: string[] = [];

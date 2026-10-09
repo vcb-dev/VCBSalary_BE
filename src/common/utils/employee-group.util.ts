@@ -75,3 +75,19 @@ export async function assertEmployeeGroupsAssignable(
 
   return groups;
 }
+
+/**
+ * `employeeGroups` đọc qua bảng nối EmployeeGroupMember nên mỗi phần tử là `{ employeeGroup }`;
+ * API vẫn trả mảng nhóm phẳng như trước khi tách bảng nối.
+ */
+export function withFlatEmployeeGroups<
+  T extends { employeeGroups: Array<{ employeeGroup: object }> },
+>(employee: T) {
+  const { employeeGroups, ...rest } = employee;
+  return {
+    ...rest,
+    employeeGroups: employeeGroups.map((link) => link.employeeGroup) as Array<
+      T['employeeGroups'][number]['employeeGroup']
+    >,
+  };
+}

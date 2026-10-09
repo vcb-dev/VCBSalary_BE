@@ -5,14 +5,27 @@ import { AuditLogService } from '../../audit/audit-log.service';
 import { AppException } from '../../../common/errors/app.exception';
 import { ErrorCode } from '../../../common/errors/error-codes';
 import { assertEmployeeGroupsAssignable } from '../../../common/utils/employee-group.util';
+import {
+  createJoinRows,
+  replaceJoinRows,
+} from '../../../common/utils/join-table.util';
 import { PrismaService } from '../../../prisma/prisma.service';
 import type { CreateKpiGroupDto, UpdateKpiGroupDto } from './dto/kpi-group.dto';
 import type { CreateKpiItemDto, UpdateKpiItemDto } from './dto/kpi-item.dto';
 
 // Nhóm nghiệp vụ được tự gán: FE cần id + tên để hiển thị badge và dựng lại form sửa.
 const APPLICABLE_GROUP_SELECT = {
-  select: { id: true, code: true, name: true, departmentId: true },
-  orderBy: { name: 'asc' },
+  select: {
+    employeeGroup: {
+      select: { id: true, code: true, name: true, departmentId: true },
+    },
+  },
+  orderBy: { employeeGroup: { name: 'asc' } },
+} as const;
+
+const TEAM_SELECT = {
+  select: { team: true },
+  orderBy: { team: { name: 'asc' } },
 } as const;
 
 @Injectable()
@@ -23,22 +36,23 @@ export class KpiGroupsService {
     private readonly authorization: AuthorizationService,
   ) {}
 
-  list() {
-    return this.prisma.kpiGroup.findMany({
+  async list() {
+    const groups = await this.prisma.kpiGroup.findMany({
       orderBy: { name: 'asc' },
       include: {
-        teams: { orderBy: { name: 'asc' } },
+        teams: TEAM_SELECT,
         applicableEmployeeGroups: APPLICABLE_GROUP_SELECT,
         _count: { select: { items: true } },
       },
     });
+    return groups.map(toKpiGroupResponse);
   }
 
   async getOrThrow(id: number) {
     const group = await this.prisma.kpiGroup.findUnique({
       where: { id },
       include: {
-        teams: { orderBy: { name: 'asc' } },
+        teams: TEAM_SELECT,
         applicableEmployeeGroups: APPLICABLE_GROUP_SELECT,
         items: { orderBy: { sortOrder: 'asc' } },
       },
@@ -50,7 +64,7 @@ export class KpiGroupsService {
         HttpStatus.NOT_FOUND,
       );
     }
-    return group;
+    return toKpiGroupResponse(group);
   }
 
   async create(dto: CreateKpiGroupDto, actorUserId: string) {
@@ -72,10 +86,11 @@ export class KpiGroupsService {
           name: dto.name,
           description: dto.description,
           dataSource: dto.dataSource,
-          applicableEmployeeGroups: {
-            connect: applicableEmployeeGroupIds.map((id) => ({ id })),
-          },
-          teams: { connect: dto.teamIds.map((id) => ({ id })) },
+          applicableEmployeeGroups: createJoinRows(
+            'employeeGroupId',
+            applicableEmployeeGroupIds,
+          ),
+          teams: createJoinRows('teamId', dto.teamIds),
           createdByUserId: actorUserId,
         },
         include: { applicableEmployeeGroups: APPLICABLE_GROUP_SELECT },
@@ -92,7 +107,7 @@ export class KpiGroupsService {
           teamIds: dto.teamIds,
         },
       });
-      return group;
+      return toKpiGroupResponse(group);
     });
   }
 
@@ -105,19 +120,19 @@ export class KpiGroupsService {
     }
     const teams = dto.teamIds
       ? await this.assertTeamsExist(dto.teamIds)
-      : (existing.teams ?? []);
+      : (existing.teams ?? []).map((link) => link.team);
     if (dto.applicableEmployeeGroupIds) {
       await this.assertEmployeeGroupsMatchTeams(
         dto.applicableEmployeeGroupIds,
         teams,
-        existing.applicableEmployeeGroups.map((group) => group.id),
+        existing.applicableEmployeeGroups.map((link) => link.employeeGroupId),
       );
     }
     // Sửa metadata/đầu mục cũng ảnh hưởng mọi team đang dùng nhóm này. Leader chỉ được sửa khi
     // có scope trên TOÀN BỘ team của nhóm (và cả team mới nếu thay đổi danh sách).
     await this.assertCanConfigureTeams(
       actorUserId,
-      dto.teamIds ?? (existing.teams ?? []).map((team) => team.id),
+      dto.teamIds ?? (existing.teams ?? []).map((link) => link.teamId),
     );
 
     return this.prisma.$transaction(async (tx) => {
@@ -128,14 +143,10 @@ export class KpiGroupsService {
           description: dto.description,
           dataSource: dto.dataSource,
           applicableEmployeeGroups: dto.applicableEmployeeGroupIds
-            ? {
-                set: dto.applicableEmployeeGroupIds.map((groupId) => ({
-                  id: groupId,
-                })),
-              }
+            ? replaceJoinRows('employeeGroupId', dto.applicableEmployeeGroupIds)
             : undefined,
           teams: dto.teamIds
-            ? { set: dto.teamIds.map((teamId) => ({ id: teamId })) }
+            ? replaceJoinRows('teamId', dto.teamIds)
             : undefined,
           isActive: dto.isActive,
         },
@@ -151,13 +162,13 @@ export class KpiGroupsService {
           name: existing.name,
           isActive: existing.isActive,
           applicableEmployeeGroupIds: existing.applicableEmployeeGroups.map(
-            (group) => group.id,
+            (link) => link.employeeGroupId,
           ),
-          teamIds: (existing.teams ?? []).map((team) => team.id),
+          teamIds: (existing.teams ?? []).map((link) => link.teamId),
         },
         afterData: { ...dto },
       });
-      return updated;
+      return toKpiGroupResponse(updated);
     });
   }
 
@@ -171,7 +182,7 @@ export class KpiGroupsService {
     const existing = await this.getGroupOrThrow(id);
     await this.assertCanManageTeamsWithPermission(
       actorUserId,
-      (existing.teams ?? []).map((team) => team.id),
+      (existing.teams ?? []).map((link) => link.teamId),
       'kpi.delete_group',
     );
 
@@ -223,9 +234,9 @@ export class KpiGroupsService {
           name: existing.name,
           isActive: existing.isActive,
           applicableEmployeeGroupIds: existing.applicableEmployeeGroups.map(
-            (group) => group.id,
+            (link) => link.employeeGroupId,
           ),
-          teamIds: (existing.teams ?? []).map((team) => team.id),
+          teamIds: (existing.teams ?? []).map((link) => link.teamId),
         },
       });
       await tx.kpiItem.deleteMany({ where: { kpiGroupId: id } });
@@ -241,7 +252,7 @@ export class KpiGroupsService {
     const group = await this.getGroupOrThrow(groupId);
     await this.assertCanConfigureTeams(
       actorUserId,
-      (group.teams ?? []).map((team) => team.id),
+      (group.teams ?? []).map((link) => link.teamId),
     );
     const latest = await this.prisma.kpiItem.aggregate({ _max: { id: true } });
     const code = `KPI-I-${String((latest._max.id ?? 0) + 1).padStart(6, '0')}`;
@@ -278,7 +289,7 @@ export class KpiGroupsService {
     }
     await this.assertCanConfigureTeams(
       actorUserId,
-      (existing.kpiGroup?.teams ?? []).map((team) => team.id),
+      (existing.kpiGroup?.teams ?? []).map((link) => link.teamId),
     );
 
     return this.prisma.$transaction(async (tx) => {
@@ -311,8 +322,10 @@ export class KpiGroupsService {
     const group = await this.prisma.kpiGroup.findUnique({
       where: { id },
       include: {
-        teams: true,
-        applicableEmployeeGroups: { select: { id: true } },
+        teams: {
+          select: { teamId: true, team: { select: { departmentId: true } } },
+        },
+        applicableEmployeeGroups: { select: { employeeGroupId: true } },
       },
     });
     if (!group) {
@@ -328,7 +341,9 @@ export class KpiGroupsService {
   private async getItemOrThrow(id: number) {
     const item = await this.prisma.kpiItem.findUnique({
       where: { id },
-      include: { kpiGroup: { include: { teams: true } } },
+      include: {
+        kpiGroup: { include: { teams: { select: { teamId: true } } } },
+      },
     });
     if (!item) {
       throw new AppException(
@@ -428,4 +443,25 @@ export class KpiGroupsService {
       );
     }
   }
+}
+
+/** API vẫn trả `teams`/`applicableEmployeeGroups` là mảng bản ghi phẳng như trước khi tách bảng nối. */
+function toKpiGroupResponse<
+  T extends {
+    teams?: Array<{ team: object }>;
+    applicableEmployeeGroups: Array<{ employeeGroup: object }>;
+  },
+>(group: T) {
+  const { teams, applicableEmployeeGroups, ...rest } = group;
+  return {
+    ...rest,
+    ...(teams && {
+      teams: teams.map((link) => link.team) as Array<
+        NonNullable<T['teams']>[number]['team']
+      >,
+    }),
+    applicableEmployeeGroups: applicableEmployeeGroups.map(
+      (link) => link.employeeGroup,
+    ) as Array<T['applicableEmployeeGroups'][number]['employeeGroup']>,
+  };
 }

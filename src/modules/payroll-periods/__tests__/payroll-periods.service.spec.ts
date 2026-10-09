@@ -393,7 +393,9 @@ describe('PayrollPeriodsService', () => {
           employeeCode: 'ED-01',
           fullName: 'Editor A',
           jobTitle: 'Video Editor',
-          employeeGroups: [{ id: 1, code: 'EDITOR' }],
+          employeeGroups: [
+            { employeeGroupId: 1, employeeGroup: { code: 'EDITOR' } },
+          ],
           teamId: 't1',
           team: { code: 'TEAM-A', name: 'Team A' },
           leaderEmployeeId: null,
@@ -421,8 +423,8 @@ describe('PayrollPeriodsService', () => {
           fullName: 'Creator A',
           jobTitle: 'Content Creator',
           employeeGroups: [
-            { id: 1, code: 'EDITOR' },
-            { id: 2, code: 'CONTENT_CREATOR' },
+            { employeeGroupId: 1, employeeGroup: { code: 'EDITOR' } },
+            { employeeGroupId: 2, employeeGroup: { code: 'CONTENT_CREATOR' } },
           ],
           teamId: 't1',
           team: { code: 'TEAM-A', name: 'Team A' },
@@ -449,12 +451,12 @@ describe('PayrollPeriodsService', () => {
       prisma.kpiGroup.findMany.mockResolvedValue([
         {
           id: 'group-editor',
-          applicableEmployeeGroups: [{ id: 1 }],
+          applicableEmployeeGroups: [{ employeeGroupId: 1 }],
           items: [{ id: 'item-video' }],
         },
         {
           id: 'group-content',
-          applicableEmployeeGroups: [{ id: 2 }],
+          applicableEmployeeGroups: [{ employeeGroupId: 2 }],
           items: [{ id: 'item-content' }],
         },
         {
@@ -533,7 +535,9 @@ describe('PayrollPeriodsService', () => {
           employeeCode: 'ED-01',
           fullName: 'Editor A',
           jobTitle: 'Video Editor',
-          employeeGroups: [{ id: 1, code: 'EDITOR' }],
+          employeeGroups: [
+            { employeeGroupId: 1, employeeGroup: { code: 'EDITOR' } },
+          ],
           teamId: 't1',
           team: { code: 'TEAM-A', name: 'Team A' },
           leaderEmployeeId: null,
@@ -559,7 +563,7 @@ describe('PayrollPeriodsService', () => {
       prisma.kpiGroup.findMany.mockResolvedValue([
         {
           id: 'group-editor',
-          applicableEmployeeGroups: [{ id: 1 }],
+          applicableEmployeeGroups: [{ employeeGroupId: 1 }],
           items: [{ id: 'item-video' }],
         },
       ]);
@@ -803,7 +807,9 @@ describe('PayrollPeriodsService', () => {
           employeeCode: 'NV-02',
           fullName: 'Lê Văn Ninh',
           jobTitle: 'Content Creator',
-          employeeGroups: [{ id: 2, code: 'CONTENT_CREATOR' }],
+          employeeGroups: [
+            { employeeGroupId: 2, employeeGroup: { code: 'CONTENT_CREATOR' } },
+          ],
           teamId: 't2',
           team: { code: 'TEAM-B', name: 'Team K4' },
           leaderEmployeeId: null,
