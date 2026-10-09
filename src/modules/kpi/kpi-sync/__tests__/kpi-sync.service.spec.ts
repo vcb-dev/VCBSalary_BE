@@ -113,7 +113,7 @@ describe('KpiSyncService', () => {
     const service = new KpiSyncService(
       prisma as never,
       client as never,
-      { record: jest.fn() } as never,
+      { notify: jest.fn() } as never,
       makeAuthorizationMock() as never,
     );
 
@@ -145,7 +145,7 @@ describe('KpiSyncService', () => {
         fetchKpisForPayrollSync: jest.fn(),
         fetchPerformanceGoalsForPayrollSync: jest.fn(),
       } as never,
-      { record: jest.fn() } as never,
+      { notify: jest.fn() } as never,
       makeAuthorizationMock() as never,
     );
 
@@ -220,7 +220,7 @@ describe('KpiSyncService', () => {
     const service = new KpiSyncService(
       prisma as never,
       client as never,
-      { record: jest.fn() } as never,
+      { notify: jest.fn() } as never,
       makeAuthorizationMock() as never,
     );
 
@@ -308,7 +308,7 @@ describe('KpiSyncService', () => {
     const service = new KpiSyncService(
       prisma as never,
       client as never,
-      { record: jest.fn().mockResolvedValue({}) } as never,
+      { notify: jest.fn() } as never,
       makeAuthorizationMock() as never,
     );
     await service.sync(
@@ -413,7 +413,7 @@ describe('KpiSyncService', () => {
     const service = new KpiSyncService(
       prisma as never,
       client as never,
-      { record: jest.fn() } as never,
+      { notify: jest.fn() } as never,
       makeAuthorizationMock() as never,
     );
 
@@ -502,7 +502,7 @@ describe('KpiSyncService', () => {
     const service = new KpiSyncService(
       prisma as never,
       client as never,
-      { record: jest.fn() } as never,
+      { notify: jest.fn() } as never,
       makeAuthorizationMock() as never,
     );
 
@@ -600,10 +600,11 @@ describe('KpiSyncService', () => {
         warnings: [],
       }),
     };
+    const auditLog = { record: jest.fn(), notify: jest.fn() };
     const service = new KpiSyncService(
       prisma as never,
       client as never,
-      { record: jest.fn().mockResolvedValue({}) } as never,
+      auditLog as never,
       makeAuthorizationMock() as never,
     );
 
@@ -649,6 +650,12 @@ describe('KpiSyncService', () => {
       }),
     });
     expect(prisma.kpiSyncRunItem.create).toHaveBeenCalledTimes(2);
+    // Lịch sử đồng bộ nằm ở KpiSyncRun/KpiSyncRunItem, không ghi nhật ký hệ thống.
+    expect(auditLog.record).not.toHaveBeenCalled();
+    expect(auditLog.notify).toHaveBeenCalledTimes(1);
+    expect(auditLog.notify).toHaveBeenCalledWith(prisma, [
+      expect.objectContaining({ action: 'KPI_SYNC_APPLIED' }),
+    ]);
   });
 
   describe('phạm vi team của Leader', () => {
@@ -666,7 +673,7 @@ describe('KpiSyncService', () => {
       const service = new KpiSyncService(
         prisma as never,
         client as never,
-        { record: jest.fn() } as never,
+        { notify: jest.fn() } as never,
         authorization as never,
       );
       return { service, client, authorization };

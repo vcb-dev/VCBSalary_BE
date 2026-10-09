@@ -1,6 +1,8 @@
 /**
  * Nhật ký chỉ lưu các thay đổi nghiệp vụ nhạy cảm cần truy vết lâu dài.
  * Notification của KPI/OKR vẫn được phát riêng, nhưng không tạo audit log.
+ * Đồng bộ KPI/OKR/traffic từ VCBI không ghi nhật ký: lịch sử từng lượt và giá trị trước/sau đã
+ * nằm ở các bảng *SyncRun/*SyncRunItem.
  */
 export const AUDITED_ACTIONS = [
   'USER_CREATED',
@@ -40,9 +42,6 @@ export const AUDITED_ACTIONS = [
   'TRAFFIC_CREATED',
   'TRAFFIC_UPDATED',
   'TRAFFIC_DELETED',
-  // Traffic đồng bộ từ AutomationGenVideo cũng vào thẳng công thức lương như số nhập tay, nên
-  // phải truy vết được y như TRAFFIC_CREATED/TRAFFIC_UPDATED.
-  'TRAFFIC_SYNCED',
   'KPI_ACTUAL_OVERRIDE',
   'OKR_ACTUAL_OVERRIDE',
 ] as const;

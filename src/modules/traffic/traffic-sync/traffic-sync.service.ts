@@ -17,7 +17,6 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { AuthorizationService } from '../../access-control/authorization.service';
 import type { ResolvedScope } from '../../../common/types/resolved-scope.types';
 import { PeriodScopeService } from '../../access-control/period-scope.service';
-import { AuditLogService } from '../../audit/audit-log.service';
 import { AutomationGenVideoClient } from '../../../common/clients/automation-gen-video.client';
 import { matchEmployeesByEmailOrName } from '../../../common/utils/employee-identity-matcher';
 import { buildLinkedTeamScopeWhere } from '../../../common/utils/linked-team-scope.util';
@@ -82,7 +81,6 @@ export class TrafficSyncService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly sourceClient: AutomationGenVideoClient,
-    private readonly auditLog: AuditLogService,
     private readonly authorization: AuthorizationService,
     private readonly periodScope: PeriodScopeService,
   ) {}
@@ -175,7 +173,7 @@ export class TrafficSyncService {
       await forEachConcurrent(
         resolved,
         TRAFFIC_SYNC_PERSON_CONCURRENCY,
-        (person) => this.applyPerson(run.id, actorUserId, period.id, person),
+        (person) => this.applyPerson(run.id, period.id, person),
       );
 
       const counts = await this.countResults(run.id);
@@ -438,7 +436,6 @@ export class TrafficSyncService {
 
   private async applyPerson(
     runId: string,
-    actorUserId: string,
     periodId: number,
     person: ResolvedPerson,
   ) {
@@ -487,7 +484,6 @@ export class TrafficSyncService {
       try {
         const pending = await this.applyPlatform(
           itemCommon,
-          actorUserId,
           periodId,
           person.employeeId,
           value,
@@ -521,7 +517,6 @@ export class TrafficSyncService {
    */
   private async applyPlatform(
     common: PlatformSyncItemCommon,
-    actorUserId: string,
     periodId: number,
     employeeId: number,
     value: TrafficPlatformValue,
@@ -603,21 +598,6 @@ export class TrafficSyncService {
           incomingViews: value.views,
           appliedViews: saved.views,
           employeeTrafficRecordId: saved.id,
-        },
-      });
-      await this.auditLog.record(tx, {
-        actorUserId,
-        action: 'TRAFFIC_SYNCED',
-        entityType: 'EmployeeTrafficRecord',
-        entityId: String(saved.id),
-        targetEmployeeId: employeeId,
-        payrollPeriodId: periodId,
-        beforeData: previous ? { views: previous.views.toString() } : undefined,
-        afterData: {
-          platform: value.platform,
-          views: saved.views.toString(),
-          sourceReportDate: common.sourceReportDate,
-          source: SOURCE_SYSTEM,
         },
       });
     });

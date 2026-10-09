@@ -62,7 +62,7 @@ describe('AuditLogService', () => {
 
     const result = await service.record(db as never, {
       actorUserId: 'user-1',
-      action: 'KPI_ACTUAL_SYNCED',
+      action: 'KPI_ACTUAL_UPDATED',
       entityType: 'EmployeeKpiActual',
       entityId: 14,
       targetEmployeeId: 7,
@@ -71,7 +71,7 @@ describe('AuditLogService', () => {
     expect(result).toBeNull();
     expect(db.auditLog.create).not.toHaveBeenCalled();
     expect(notifications.fromAuditEvents).toHaveBeenCalledWith(db, [
-      expect.objectContaining({ action: 'KPI_ACTUAL_SYNCED' }),
+      expect.objectContaining({ action: 'KPI_ACTUAL_UPDATED' }),
     ]);
   });
 

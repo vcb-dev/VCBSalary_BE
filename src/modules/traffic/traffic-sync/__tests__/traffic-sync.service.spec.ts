@@ -132,7 +132,6 @@ function setup(
       rows,
     }),
   };
-  const auditLog = { record: jest.fn().mockResolvedValue(null) };
   const authorization = {
     resolvePermissionScope: jest.fn().mockResolvedValue(scope),
   };
@@ -142,7 +141,6 @@ function setup(
   const service = new TrafficSyncService(
     prisma as never,
     client as never,
-    auditLog as never,
     authorization as never,
     periodScope as never,
   );
@@ -152,7 +150,7 @@ function setup(
     startDate: new Date('2026-09-01T00:00:00.000Z'),
     endDate: new Date('2026-09-30T00:00:00.000Z'),
   });
-  return { service, prisma, client, auditLog, authorization, periodScope };
+  return { service, prisma, client, authorization, periodScope };
 }
 
 describe('TrafficSyncService.sync', () => {

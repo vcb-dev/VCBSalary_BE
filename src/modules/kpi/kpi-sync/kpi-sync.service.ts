@@ -189,13 +189,13 @@ export class KpiSyncService {
         KPI_SYNC_RECORD_CONCURRENCY,
         async (record) => {
           // TARGET và ACTUAL nằm ở hai bảng độc lập. Chạy song song hai nhánh vẫn giữ nguyên
-          // transaction/audit riêng và cơ chế một nhánh lỗi không làm hỏng nhánh còn lại.
+          // transaction riêng và cơ chế một nhánh lỗi không làm hỏng nhánh còn lại.
           await Promise.all([
             this.applySafely(run.id, record, 'TARGET', () =>
               this.applyTarget(run.id, actorUserId, period.id, record),
             ),
             this.applySafely(run.id, record, 'ACTUAL', () =>
-              this.applyActual(run.id, actorUserId, period.id, record),
+              this.applyActual(run.id, period.id, record),
             ),
           ]);
         },
@@ -203,8 +203,7 @@ export class KpiSyncService {
       await forEachConcurrent(
         resolvedPerformanceGoals,
         KPI_SYNC_RECORD_CONCURRENCY,
-        (record) =>
-          this.applyPerformanceGoal(run.id, actorUserId, period.id, record),
+        (record) => this.applyPerformanceGoal(run.id, period.id, record),
       );
       await this.archiveMissingPerformanceGoals(
         team.id,
@@ -241,21 +240,25 @@ export class KpiSyncService {
           },
           include: this.runInclude,
         });
-        await this.auditLog.record(tx, {
-          actorUserId,
-          action: 'KPI_SYNC_APPLIED',
-          entityType: 'KpiSyncRun',
-          entityId: run.id,
-          payrollPeriodId: period.id,
-          afterData: {
-            status,
-            successfulRecords: counts.SUCCESS,
-            skippedRecords: counts.SKIPPED,
-            conflictRecords: counts.CONFLICT,
-            failedRecords: counts.FAILED,
-            warningCount: sourceWarnings.length,
+        // Lịch sử đồng bộ đã nằm ở KpiSyncRun/KpiSyncRunItem nên không ghi nhật ký hệ thống,
+        // chỉ báo cho người bấm khi lượt chạy có xung đột, lỗi hoặc cảnh báo.
+        await this.auditLog.notify(tx, [
+          {
+            actorUserId,
+            action: 'KPI_SYNC_APPLIED',
+            entityType: 'KpiSyncRun',
+            entityId: run.id,
+            payrollPeriodId: period.id,
+            afterData: {
+              status,
+              successfulRecords: counts.SUCCESS,
+              skippedRecords: counts.SKIPPED,
+              conflictRecords: counts.CONFLICT,
+              failedRecords: counts.FAILED,
+              warningCount: sourceWarnings.length,
+            },
           },
-        });
+        ]);
         return updated;
       });
     } catch (error) {
@@ -272,14 +275,16 @@ export class KpiSyncService {
             errorSummary: message.slice(0, 1000),
           },
         });
-        await this.auditLog.record(tx, {
-          actorUserId,
-          action: 'KPI_SYNC_FAILED',
-          entityType: 'KpiSyncRun',
-          entityId: run.id,
-          payrollPeriodId: period.id,
-          afterData: { status: 'FAILED', error: message.slice(0, 1000) },
-        });
+        await this.auditLog.notify(tx, [
+          {
+            actorUserId,
+            action: 'KPI_SYNC_FAILED',
+            entityType: 'KpiSyncRun',
+            entityId: run.id,
+            payrollPeriodId: period.id,
+            afterData: { status: 'FAILED', error: message.slice(0, 1000) },
+          },
+        ]);
       });
       throw error;
     }
@@ -976,7 +981,6 @@ export class KpiSyncService {
 
   private async applyPerformanceGoal(
     runId: string,
-    actorUserId: string,
     periodId: number,
     record: ResolvedPerformanceGoal,
   ) {
@@ -1068,28 +1072,6 @@ export class KpiSyncService {
           },
         }),
       ]);
-      await this.auditLog.record(tx, {
-        actorUserId,
-        action: 'PERFORMANCE_GOAL_SYNCED',
-        entityType: 'EmployeeOkr',
-        entityId: goal.id,
-        targetEmployeeId: record.employeeId,
-        payrollPeriodId: periodId,
-        beforeData: record.previous
-          ? {
-              targetValue: record.previous.targetValue.toString(),
-              actualValue: record.previous.actualValue.toString(),
-              rewardAmount: record.previous.rewardAmount.toString(),
-            }
-          : undefined,
-        afterData: {
-          externalItemId: source.external_item_id,
-          revision: source.revision,
-          goalType: source.item_type,
-          targetValue: source.target,
-          actualValue: source.actual_final,
-        },
-      });
     });
   }
 
@@ -1218,27 +1200,11 @@ export class KpiSyncService {
           employeeKpiTargetId: target.id,
         },
       });
-      await this.auditLog.record(tx, {
-        actorUserId,
-        action: 'KPI_TARGET_SYNCED',
-        entityType: 'EmployeeKpiTarget',
-        entityId: target.id,
-        targetEmployeeId: record.employeeId,
-        payrollPeriodId: periodId,
-        beforeData: previous
-          ? { targetValue: previous.targetValue.toString() }
-          : undefined,
-        afterData: {
-          targetValue: target.targetValue.toString(),
-          source: 'AUTOMATION_GEN_VIDEO',
-        },
-      });
     });
   }
 
   private async applyActual(
     runId: string,
-    actorUserId: string,
     periodId: number,
     record: ResolvedRecord,
   ) {
@@ -1348,21 +1314,6 @@ export class KpiSyncService {
           incomingValue: record.source.actual!,
           appliedValue: actual.actualValue,
           employeeKpiActualId: actual.id,
-        },
-      });
-      await this.auditLog.record(tx, {
-        actorUserId,
-        action: 'KPI_ACTUAL_SYNCED',
-        entityType: 'EmployeeKpiActual',
-        entityId: actual.id,
-        targetEmployeeId: record.employeeId,
-        payrollPeriodId: periodId,
-        beforeData: previous
-          ? { actualValue: previous.actualValue.toString() }
-          : undefined,
-        afterData: {
-          actualValue: actual.actualValue.toString(),
-          source: 'AUTOMATION_GEN_VIDEO',
         },
       });
     });
